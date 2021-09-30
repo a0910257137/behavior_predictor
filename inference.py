@@ -4,7 +4,12 @@ import cv2
 import os
 import time
 from .core.post_model import PostModel
+from tensorflow.python.framework.convert_to_constants import convert_variables_to_constants_v2_as_graph
+from tensorflow.lite.python.util import run_graph_optimizations, get_grappler_config
 from pprint import pprint
+
+tf.get_logger().setLevel('ERROR')
+tf.__version__
 
 
 class BehaviorPredictor:
@@ -19,16 +24,18 @@ class BehaviorPredictor:
             self.scale_factor = self.config['scale_factor']
             self.reg_max = self.config['reg_max']
             self.top_k_n = self.config['top_k_n']
-
-            self.resize = tf.constant(self.config['img_input_size'],
-                                      dtype=tf.float32)
+            self.resize = self.config['img_input_size']
             self.iou_thres = self.config['iou_thres']
+            self.box_score = self.config['box_score']
+
             self.model = tf.keras.models.load_model(self.model_dir)
-            self.post_model = PostModel(self.model, self.strides,
+            # graph_def = self.frozen_keras_graph(self.model_dir, self.model)
+            # pred_func = self.load_pb(
+            #     os.path.join(self.model_dir, 'frozen_graph.pb'))
+            self.post_model = PostModel(self.resize, self.model, self.strides,
                                         self.scale_factor, self.reg_max,
-                                        self.top_k_n, self.iou_thres)
-            # imgs = tf.constant(0., shape=(1, 224, 224, 3))
-            # preds = self.model(imgs, training=False)
+                                        self.top_k_n, self.iou_thres,
+                                        self.box_score)
 
     def pred(self, imgs, origin_shapes):
         imgs = list(
@@ -41,53 +48,55 @@ class BehaviorPredictor:
         imgs = tf.cast(imgs, tf.float32)
         origin_shapes = tf.cast(origin_shapes, tf.float32)
         rets = self.post_model([imgs, origin_shapes])
-
-        # feat_bbox_0 = np.load("../nanodet/feat_bbox_0.npy")
-        # feat_bbox_1 = np.load("../nanodet/feat_bbox_1.npy")
-        # feat_bbox_2 = np.load("../nanodet/feat_bbox_2.npy")
-        # feat_cls_1 = np.load("../nanodet/feat_cls_1.npy")
-        # feat_cls_0 = np.load("../nanodet/feat_cls_0.npy")
-        # feat_cls_2 = np.load("../nanodet/feat_cls_2.npy")
-        # bbox_preds = [
-        #     tf.convert_to_tensor(feat_bbox_0),
-        #     tf.convert_to_tensor(feat_bbox_1),
-        #     tf.convert_to_tensor(feat_bbox_2)
-        # ]
-        # cls_scores = [
-        #     tf.convert_to_tensor(feat_cls_0),
-        #     tf.convert_to_tensor(feat_cls_1),
-        #     tf.convert_to_tensor(feat_cls_2)
-        # ]
-        # origin_shapes = tf.convert_to_tensor(origin_shapes)
-
-        # rets = self.post_model(img, training=False)
         return rets
 
-    def batched_nms(self, boxes, scores, idxs):
-        class_agnostic = False
-        if class_agnostic:
-            boxes_for_nms = boxes
-        else:
-            max_coordinate = tf.math.reduce_max(boxes)
-            offsets = tf.cast(idxs, tf.float32) * tf.cast(
-                (max_coordinate + 1), tf.float32)
-            boxes_for_nms = boxes + offsets[:, None]
+    def load_pb(self, model_path):
+        def _imports_graph_def():
+            tf.compat.v1.import_graph_def(graph_def, name="")
 
-        split_thr = 10000
-        if len(boxes_for_nms) < split_thr:
-            keep = nms(boxes_for_nms, scores, **nms_cfg_)
-            boxes = boxes[keep]
-            scores = scores[keep]
-        else:
-            total_mask = scores.new_zeros(scores.size(), dtype=torch.bool)
-            for id in torch.unique(idxs):
-                mask = (idxs == id).nonzero(as_tuple=False).view(-1)
-                keep = nms(boxes_for_nms[mask], scores[mask], **nms_cfg_)
-                total_mask[mask[keep]] = True
+        print(model_path)
+        with tf.io.gfile.GFile(model_path, "rb") as f:
+            graph_def = tf.compat.v1.GraphDef()
+            loaded = graph_def.ParseFromString(f.read())
 
-            keep = total_mask.nonzero(as_tuple=False).view(-1)
-            keep = keep[scores[keep].argsort(descending=True)]
-            boxes = boxes[keep]
-            scores = scores[keep]
+        # Wrap frozen graph to ConcreteFunctions
 
-        return torch.cat([boxes, scores[:, None]], -1), keep
+        wrapped_import = tf.compat.v1.wrap_function(_imports_graph_def, [])
+        import_graph = wrapped_import.graph
+        print("-" * 50)
+        print("Frozen model layers: ")
+        layers = [op.name for op in import_graph.get_operations()]
+        for layer in layers:
+            print(layer)
+        print("-" * 50)
+
+        return wrapped_import.prune(
+            tf.nest.map_structure(import_graph.as_graph_element, ["x:0"]),
+            tf.nest.map_structure(import_graph.as_graph_element,
+                                  ["Identity:0"]))
+
+    def frozen_keras_graph(self, save_path, model):
+        pprint(model.layers[0].inputs)
+        inputs = model.layers[0].inputs[0].shape
+        dtype = tf.float32
+        real_model = tf.function(model).get_concrete_function(
+            tf.TensorSpec(inputs, dtype))
+        frozen_func, graph_def = convert_variables_to_constants_v2_as_graph(
+            real_model)
+
+        input_tensors = [
+            tensor for tensor in frozen_func.inputs
+            if tensor.dtype != tf.resource
+        ]
+        output_tensors = frozen_func.outputs
+        graph_def = run_graph_optimizations(graph_def,
+                                            input_tensors,
+                                            output_tensors,
+                                            config=get_grappler_config(
+                                                ["constfold", "function"]),
+                                            graph=frozen_func.graph)
+        # frozen_func.graph.as_graph_def()
+        os.path.join(save_path, 'frozen_graph')
+        tf.io.write_graph(graph_def, save_path, 'frozen_graph.pb')
+
+        return graph_def

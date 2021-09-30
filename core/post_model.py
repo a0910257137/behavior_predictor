@@ -1,29 +1,39 @@
 import tensorflow as tf
+import numpy as np
+from pprint import pprint
 
 
 class PostModel(tf.keras.Model):
-    def __init__(self, model, strides, scale_factor, reg_max, top_k_n,
-                 iou_thres, *args, **kwargs):
+    def __init__(self, img_input_size, model, strides, scale_factor, reg_max,
+                 top_k_n, iou_thres, box_score, *args, **kwargs):
         super(PostModel, self).__init__(*args, **kwargs)
         self.strides = tf.constant(strides, dtype=tf.float32)
         self.scale_factor = scale_factor
         self.reg_max = reg_max
         self.top_k_n = top_k_n
         self.iou_thres = iou_thres
+        self.box_score = box_score
         self.model = model
-        # self.resize = tf.constant(self.config['img_input_size'],
-        #                           dtype=tf.float32)
+        self.model_inp_shape = tf.constant(img_input_size, dtype=tf.float32)
 
     def call(self, inputs, training=None):
-        x, oring_shapes = inputs
+        x, origin_shapes = inputs
+        self.batch = tf.shape(origin_shapes)[0]
+        resize_ratio = tf.einsum('b d, d ->b d', origin_shapes,
+                                 1 / self.model_inp_shape)
+        print(resize_ratio)
+        ml_intput_shapes = tf.tile(self.model_inp_shape[None, :], [3, 1])
         preds = self.model(x, training)
-        print(preds)
         cls_scores, bbox_preds = [], []
         for k in preds:
-            cls_score, bbox_pred = preds[k]['cls_score'], preds[k]['bbox_pred']
-        rets = self.get_bboxes(cls_scores, bbox_preds, origin_shapes)
+            cls_score, bbox_pred = preds[k]['cls_scores'], preds[k][
+                'bbox_pred']
+            cls_scores += [cls_score]
+            bbox_preds += [bbox_pred]
+        rets = self.get_bboxes(cls_scores, bbox_preds, ml_intput_shapes,
+                               resize_ratio)
 
-        return
+        return rets
 
     def get_single_level_center_point(self,
                                       featmap_size,
@@ -90,78 +100,68 @@ class PostModel(tf.keras.Model):
         x = tf.reshape(x, [-1, 4])
         return x
 
-    def get_bboxes(self, cls_scores, bbox_preds, origin_shapes, rescale=False):
+    def get_bboxes(self,
+                   cls_scores,
+                   bbox_preds,
+                   origin_shapes,
+                   resize_ratio,
+                   rescale=False):
 
         assert len(cls_scores) == len(bbox_preds)
-        num_levels = len(cls_scores)
         mlvl_bboxes = []
         mlvl_scores = []
         for stride, cls_score, bbox_pred in zip(self.strides, cls_scores,
                                                 bbox_preds):
-            cls_score = tf.transpose(cls_score, [0, 2, 3, 1])
-            bbox_pred = tf.transpose(bbox_pred, [0, 2, 3, 1])
+            featmap_size = tf.shape(cls_score)[1:3]
+            #TODO: test firt batch
             cls_score = cls_score[0]
             bbox_pred = bbox_pred[0]
-            featmap_size = tf.shape(cls_score)[0:2]
-
+            #TODO: test firt batch
             y, x = self.get_single_level_center_point(featmap_size, stride)
             center_points = tf.concat([y[:, None], x[:, None]], axis=-1)
             scores = tf.nn.sigmoid(cls_score)
             scores = tf.reshape(scores, [-1, 80])
             # distribution_project
-
             bbox_pred = self.distribution(bbox_pred) * stride
-            tl_pred = bbox_pred[:, :2]
-            tl_pred = tl_pred[:, ::-1]
-            br_pred = bbox_pred[:, 2:]
-            br_pred = br_pred[:, ::-1]
-            bbox_pred = tf.concat([tl_pred, br_pred], axis=-1)
-
             nms_pre = 1000
             if tf.shape(scores)[0] > nms_pre:
                 max_scores = tf.math.reduce_max(scores, axis=-1)
                 _, topk_inds = tf.nn.top_k(max_scores, nms_pre)
-
                 center_points = tf.gather_nd(center_points, topk_inds[:, None])
                 bbox_pred = tf.gather_nd(bbox_pred, topk_inds[:, None])
                 scores = tf.gather_nd(scores, topk_inds[:, None])
 
-            # center_points,
-            # bbox_pred,
-            # max_shape=img_shape
-            img_shape = tf.cast([256, 320], tf.float32)
-
             bboxes = self.distance2bbox(center_points,
                                         bbox_pred,
-                                        max_shape=img_shape)
+                                        max_shape=self.model_inp_shape)
             mlvl_bboxes.append(bboxes)
             mlvl_scores.append(scores)
 
         mlvl_bboxes = tf.concat(mlvl_bboxes, axis=0)
         if rescale:
-            mlvl_bboxes /= mlvl_bboxes.new_tensor(scale_factor)
+            mlvl_bboxes /= mlvl_bboxes.new_tensor(self.scale_factor)
         mlvl_scores = tf.concat(mlvl_scores, axis=0)
 
         # add a dummy background class at the end of all labels
-
         padding = tf.zeros_like(mlvl_scores[:, :1])
         mlvl_scores = tf.concat([mlvl_scores, padding], axis=-1)
         mlvl_bboxes = mlvl_bboxes[None, :, None, :]
-        # mlvl_bboxes = tf.tile(mlvl_bboxes, [1, 80, 1])
         mlvl_scores = mlvl_scores[None, :, :-1]
-
         nms_reuslt = tf.image.combined_non_max_suppression(mlvl_bboxes,
                                                            mlvl_scores,
-                                                           self.n_objs,
-                                                           self.n_objs,
-                                                           iou_threshold=0.6,
+                                                           self.top_k_n,
+                                                           self.top_k_n,
+                                                           iou_threshold=0.5,
                                                            clip_boxes=False)
-        b_bboxes = nms_reuslt[0] * 2.
-        mask = nms_reuslt[1] > self.kp_thres
+        resize_ratio = tf.tile(resize_ratio, [1, 2])
+        b_bboxes = tf.einsum('b n d,b d ->b  n d', nms_reuslt[0], resize_ratio)
+
+        mask = nms_reuslt[1] > self.box_score
 
         b_bboxes = tf.concat([
             nms_reuslt[0], nms_reuslt[1][..., None], nms_reuslt[2][..., None]
         ],
                              axis=-1)
-        b_bboxes = tf.reshape(b_bboxes[mask], [-1, 2, 6])
+        b_bboxes = tf.reshape(b_bboxes[mask], [self.batch, -1, 6])
+
         return b_bboxes
