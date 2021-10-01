@@ -21,7 +21,6 @@ class PostModel(tf.keras.Model):
         self.batch = tf.shape(origin_shapes)[0]
         resize_ratio = tf.einsum('b d, d ->b d', origin_shapes,
                                  1 / self.model_inp_shape)
-        print(resize_ratio)
         ml_intput_shapes = tf.tile(self.model_inp_shape[None, :], [3, 1])
         preds = self.model(x, training)
         cls_scores, bbox_preds = [], []
@@ -72,10 +71,10 @@ class PostModel(tf.keras.Model):
         Returns:
             Tensor: Decoded bboxes.
         """
-        y1 = points[:, 0] - distance[:, 0]
-        x1 = points[:, 1] - distance[:, 1]
-        y2 = points[:, 0] + distance[:, 2]
-        x2 = points[:, 1] + distance[:, 3]
+        y1 = points[..., 0] - distance[..., 0]
+        x1 = points[..., 1] - distance[..., 1]
+        y2 = points[..., 0] + distance[..., 2]
+        x2 = points[..., 1] + distance[..., 3]
         if max_shape is not None:
             y1 = tf.clip_by_value(y1,
                                   clip_value_min=0.,
@@ -90,14 +89,17 @@ class PostModel(tf.keras.Model):
             x2 = tf.clip_by_value(x2,
                                   clip_value_min=0.,
                                   clip_value_max=max_shape[1])
-        return tf.concat([y1[:, None], x1[:, None], y2[:, None], x2[:, None]],
-                         axis=-1)
+        return tf.concat(
+            [y1[..., None], x1[..., None], y2[..., None], x2[..., None]],
+            axis=-1)
 
-    def distribution(self, x):
-        x = tf.nn.softmax(tf.reshape(x, [-1, self.reg_max + 1]), axis=-1)
+    def distribution(self, batch, x):
+        x = tf.nn.softmax(tf.reshape(x, [batch, -1, self.reg_max + 1]),
+                          axis=-1)
         ln = tf.range(self.reg_max + 1, dtype=tf.float32)
-        x = tf.linalg.matmul(x, ln[:, None])
-        x = tf.reshape(x, [-1, 4])
+        ln = ln[tf.newaxis, :, tf.newaxis]
+        x = tf.linalg.matmul(x, ln)
+        x = tf.reshape(x, [batch, -1, 4])
         return x
 
     def get_bboxes(self,
@@ -114,22 +116,28 @@ class PostModel(tf.keras.Model):
                                                 bbox_preds):
             featmap_size = tf.shape(cls_score)[1:3]
             #TODO: test firt batch
-            cls_score = cls_score[0]
-            bbox_pred = bbox_pred[0]
+            # cls_score = cls_score[0]
+            # bbox_pred = bbox_pred[0]
             #TODO: test firt batch
             y, x = self.get_single_level_center_point(featmap_size, stride)
-            center_points = tf.concat([y[:, None], x[:, None]], axis=-1)
+            b, h, w, c = [tf.shape(cls_score)[i] for i in range(4)]
+            cls_score = tf.reshape(cls_score, [b, -1, c])
             scores = tf.nn.sigmoid(cls_score)
-            scores = tf.reshape(scores, [-1, 80])
             # distribution_project
-            bbox_pred = self.distribution(bbox_pred) * stride
+            bbox_pred = self.distribution(b, bbox_pred) * stride
+            center_points = tf.concat([y[:, None], x[:, None]], axis=-1)
+            center_points = tf.tile(center_points[None, :, :], [b, 1, 1])
             nms_pre = 1000
-            if tf.shape(scores)[0] > nms_pre:
+            if h * w > nms_pre:
                 max_scores = tf.math.reduce_max(scores, axis=-1)
                 _, topk_inds = tf.nn.top_k(max_scores, nms_pre)
-                center_points = tf.gather_nd(center_points, topk_inds[:, None])
-                bbox_pred = tf.gather_nd(bbox_pred, topk_inds[:, None])
-                scores = tf.gather_nd(scores, topk_inds[:, None])
+                b_idx = tf.range(b, dtype=tf.int32)
+                b_idx = tf.tile(b_idx[:, None, None], [1, nms_pre, 1])
+                topk_inds = topk_inds[:, :, None]
+                topk_inds = tf.concat([b_idx, topk_inds], axis=-1)
+                center_points = tf.gather_nd(center_points, topk_inds)
+                bbox_pred = tf.gather_nd(bbox_pred, topk_inds)
+                scores = tf.gather_nd(scores, topk_inds)
 
             bboxes = self.distance2bbox(center_points,
                                         bbox_pred,
@@ -137,16 +145,18 @@ class PostModel(tf.keras.Model):
             mlvl_bboxes.append(bboxes)
             mlvl_scores.append(scores)
 
-        mlvl_bboxes = tf.concat(mlvl_bboxes, axis=0)
+        mlvl_bboxes = tf.concat(mlvl_bboxes, axis=1)
         if rescale:
             mlvl_bboxes /= mlvl_bboxes.new_tensor(self.scale_factor)
-        mlvl_scores = tf.concat(mlvl_scores, axis=0)
+        mlvl_scores = tf.concat(mlvl_scores, axis=1)
 
         # add a dummy background class at the end of all labels
-        padding = tf.zeros_like(mlvl_scores[:, :1])
+        padding = tf.zeros_like(mlvl_scores[..., :1])
         mlvl_scores = tf.concat([mlvl_scores, padding], axis=-1)
-        mlvl_bboxes = mlvl_bboxes[None, :, None, :]
-        mlvl_scores = mlvl_scores[None, :, :-1]
+
+        mlvl_bboxes = mlvl_bboxes[:, :, None, :]
+        mlvl_scores = mlvl_scores[..., :-1]
+
         nms_reuslt = tf.image.combined_non_max_suppression(mlvl_bboxes,
                                                            mlvl_scores,
                                                            self.top_k_n,
@@ -155,13 +165,10 @@ class PostModel(tf.keras.Model):
                                                            clip_boxes=False)
         resize_ratio = tf.tile(resize_ratio, [1, 2])
         b_bboxes = tf.einsum('b n d,b d ->b  n d', nms_reuslt[0], resize_ratio)
-
         mask = nms_reuslt[1] > self.box_score
-
         b_bboxes = tf.concat([
             nms_reuslt[0], nms_reuslt[1][..., None], nms_reuslt[2][..., None]
         ],
                              axis=-1)
         b_bboxes = tf.reshape(b_bboxes[mask], [self.batch, -1, 6])
-
         return b_bboxes
