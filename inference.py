@@ -29,9 +29,6 @@ class BehaviorPredictor:
             self.box_score = self.config['box_score']
 
             self.model = tf.keras.models.load_model(self.model_dir)
-            # graph_def = self.frozen_keras_graph(self.model_dir, self.model)
-            # pred_func = self.load_pb(
-            #     os.path.join(self.model_dir, 'frozen_graph.pb'))
             self.post_model = PostModel(self.resize, self.model, self.strides,
                                         self.scale_factor, self.reg_max,
                                         self.top_k_n, self.iou_thres,
