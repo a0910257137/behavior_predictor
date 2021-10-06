@@ -65,6 +65,8 @@ class PostModel(tf.keras.Model):
                                                            self.top_k_n,
                                                            iou_threshold=0.5,
                                                            clip_boxes=False)
+
+        resize_ratio = resize_ratio[:, ::-1]
         resize_ratio = tf.tile(resize_ratio, [1, 2])
         b_bboxes = tf.einsum('b n d,b d ->b  n d', nms_reuslt[0], resize_ratio)
         mask = nms_reuslt[1] > self.box_score
@@ -73,6 +75,7 @@ class PostModel(tf.keras.Model):
         ],
                              axis=-1)
         rets = tf.reshape(b_bboxes[mask], [self.batch, -1, 6])
+        print(rets)
         return rets
         # #TODO: in the return layers
         # mlvl_bboxes = tf.concat(mlvl_bboxes, axis=1)
@@ -202,12 +205,12 @@ class PostModel(tf.keras.Model):
             bbox_pred = tf.gather_nd(bbox_pred, topk_inds)
             scores = tf.gather_nd(scores, topk_inds)
 
-        # tl = bbox_pred[:, :2]
-        # tl = tl[:, ::-1]
-        # br = bbox_pred[:, 2:]
-        # br = br[:, ::-1]
-        # bbox_pred = tf.concat([tl, br], axis=-1)
-        bboxes = self.distance2bbox(center_points[:, ::-1],
+        bboxes = self.distance2bbox(center_points,
                                     bbox_pred,
                                     max_shape=self.model_inp_shape)
+        tl = bboxes[:, :2]
+        tl = tl[:, ::-1]
+        br = bboxes[:, 2:]
+        br = br[:, ::-1]
+        bboxes = tf.concat([tl, br], axis=-1)
         return bboxes, scores
