@@ -17,7 +17,7 @@ class PostModel(tf.keras.Model):
         self.k_pairings = k_pairings
         self.base = Base()
 
-    @tf.function
+    # @tf.function
     def call(self, x, training=False):
         imgs, origin_shapes = x
         batch_size = tf.shape(imgs)[0]
@@ -26,74 +26,7 @@ class PostModel(tf.keras.Model):
         preds = self.pred_model(imgs, training=False)
         b_bboxes = self._obj_detect(batch_size, preds['obj_heat_map'],
                                     preds['obj_size_maps'])
-        b_relations = self._relations(batch_size, b_bboxes, preds['rel_maps'],
-                                      preds['embed_maps'])
-
-        return b_bboxes, b_relations
-
-    @tf.function
-    def _relations(self, batch_size, b_bboxes, b_rel_maps, b_embed_maps):
-        b_center_kps = tf.einsum('b n d ,b d ->  b n d',
-                                 (b_bboxes[..., :2] + b_bboxes[..., 2:4]) / 2,
-                                 1 / self.resize_ratio)
-
-        b_center_kps = tf.where(b_center_kps == np.inf, 0., b_center_kps)
-        b_idxs = tf.range(batch_size, dtype=tf.int32)
-        b_idx_infos = tf.tile(b_idxs[:, None, None], [1, self.n_objs, 1])
-        b_center_kps = tf.cast((b_center_kps + .5), tf.int32)
-        b_idx_infos = tf.concat([b_idx_infos, b_center_kps], axis=-1)
-        b_rel_vals = tf.gather_nd(b_rel_maps, b_idx_infos)
-        b_rel_vals = tf.nn.softmax(b_rel_vals, axis=-1)
-        b_embed_vals = tf.gather_nd(b_embed_maps, b_idx_infos)
-        embedding_chs = tf.shape(b_embed_vals)[-1]
-        b_sub = b_embed_vals[..., :embedding_chs // 2][0]
-
-        b_obj = b_embed_vals[..., embedding_chs // 2:][0]
-
-        b_subs = tf.expand_dims(b_embed_vals[..., :embedding_chs // 2],
-                                axis=-1)
-        b_objs = tf.expand_dims(b_embed_vals[..., embedding_chs // 2:],
-                                axis=-1)
-        b_subs = tf.transpose(b_subs, [0, 3, 2, 1])
-
-        b_diff_vals = b_subs - b_objs
-        b_diff_vals = tf.sqrt(
-            tf.math.reduce_sum(tf.square(b_diff_vals), axis=-2))
-
-        b_mask = tf.where(b_center_kps == 0, 0., 1.)
-        b, n, c = [tf.shape(b_rel_vals)[i] for i in range(3)]
-        b_rel_mask = b_mask[..., :1]
-        b_rel_vals = b_rel_vals * \
-            tf.tile(b_mask[..., :1], [1,  1, c])
-
-        b_idxs_mask = tf.tile(b_mask[..., :1], [1, 1, 3])
-
-        b_mask = tf.matmul(b_mask, b_mask, transpose_b=True) / 2
-        b_diff_vals = b_diff_vals * b_mask
-        b_diff_vals = tf.where(b_diff_vals == 0., np.inf, b_diff_vals)
-        b_diff_vals = tf.transpose(b_diff_vals, [0, 2, 1])
-
-        b_objs_idxs = tf.nn.top_k(-b_diff_vals, k=self.k_pairings)
-        b_pairing_infos = b_objs_idxs[1]
-        b_subs_idxs = tf.tile(tf.range(n, dtype=tf.int32)[None, :], [b, 1])
-
-        b_subs_idxs = tf.expand_dims(b_subs_idxs, axis=-1) + 1
-        b_rel_inds = tf.expand_dims(
-            tf.argmax(b_rel_vals, output_type=tf.int32, axis=-1), axis=-1) + 1
-
-        b_relations = [
-            tf.concat([
-                b_subs_idxs, b_rel_inds,
-                tf.expand_dims(b_pairing_infos[..., i] + 1, axis=-1)
-            ],
-                      axis=-1) for i in range(self.k_pairings)
-        ]
-        b_relations = tf.concat(b_relations, axis=-2)
-        b_rel_mask = tf.tile(b_rel_mask, [1, self.k_pairings, 3])
-
-        b_relations = tf.cast(b_relations, tf.float32) * b_rel_mask
-        b_relations = tf.where(b_relations == 0., np.inf, b_relations)
-        return b_relations - 1.
+        return b_bboxes
 
     @tf.function
     def _obj_detect(self, batch_size, hms, size_maps):

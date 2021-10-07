@@ -3,7 +3,8 @@ import numpy as np
 import cv2
 import os
 import time
-from .core.post_model import PostModel
+# from .core.post_model import PostModel
+from .core.centernet_model import PostModel
 from tensorflow.python.framework.convert_to_constants import convert_variables_to_constants_v2_as_graph
 from tensorflow.lite.python.util import run_graph_optimizations, get_grappler_config
 from pprint import pprint
@@ -19,32 +20,48 @@ class BehaviorPredictor:
 
         if self.config is not None:
             self.model_dir = self.config['pb_path']
-            self.strides = tf.constant(self.config['strides'],
-                                       dtype=tf.float32)
-            self.scale_factor = self.config['scale_factor']
-            self.reg_max = self.config['reg_max']
+            #  Anchor based model
+            # self.strides = tf.constant(self.config['strides'],
+            #                            dtype=tf.float32)
+            # self.scale_factor = self.config['scale_factor']
+            # self.reg_max = self.config['reg_max']
+            # self.top_k_n = self.config['top_k_n']
+            # self.resize = self.config['img_input_size']
+            # self.iou_thres = self.config['iou_thres']
+            # self.box_score = self.config['box_score']
+
+            #  Anchor free model
+            self.resize_shape = np.asarray(config['resize_size'])
+            self.kp_resize = self.config['resize_size']
             self.top_k_n = self.config['top_k_n']
-            self.resize = self.config['img_input_size']
-            self.iou_thres = self.config['iou_thres']
-            self.box_score = self.config['box_score']
+            self.kp_thres = self.config['kp_thres']
+            self.n_objs = self.config['n_objs']
+            self.nms_iou_thres = self.config['nms_iou_thres']
+            self.k_pairings = self.config['k_pairings']
+            self._model = tf.keras.models.load_model(self.config['pb_path'])
 
             self.model = tf.keras.models.load_model(self.model_dir)
-            self.post_model = PostModel(self.resize, self.model, self.strides,
-                                        self.scale_factor, self.reg_max,
-                                        self.top_k_n, self.iou_thres,
-                                        self.box_score)
+
+            self._post_model = PostModel(self._model, self.n_objs,
+                                         self.k_pairings, self.top_k_n,
+                                         self.kp_thres, self.nms_iou_thres,
+                                         self.resize_shape)
+            # self._post_model = PostModel(self.resize, self.model, self.strides,
+            #                             self.scale_factor, self.reg_max,
+            #                             self.top_k_n, self.iou_thres,
+            #                             self.box_score)
 
     def pred(self, imgs, origin_shapes):
         imgs = list(
             map(
-                lambda x: cv2.resize(x, tuple(self.resize))[:, :, ::-1] /
-                255.0, imgs))
+                lambda x: cv2.resize(x, tuple(self.config['img_input_size']))
+                [:, :, ::-1] / 255.0, imgs))
         imgs = np.asarray(imgs)
         origin_shapes = np.asarray(origin_shapes)
 
         imgs = tf.cast(imgs, tf.float32)
         origin_shapes = tf.cast(origin_shapes, tf.float32)
-        rets = self.post_model([imgs, origin_shapes])
+        rets = self._post_model([imgs, origin_shapes])
         return rets
 
     def load_pb(self, model_path):
