@@ -3,10 +3,10 @@ import numpy as np
 from pprint import pprint
 
 
-class PostModel(tf.keras.Model):
+class APostModel(tf.keras.Model):
     def __init__(self, img_input_size, model, strides, scale_factor, reg_max,
                  top_k_n, iou_thres, box_score, *args, **kwargs):
-        super(PostModel, self).__init__(*args, **kwargs)
+        super(APostModel, self).__init__(*args, **kwargs)
         self.strides = tf.constant(strides, dtype=tf.float32)
         self.scale_factor = scale_factor
         self.reg_max = reg_max

@@ -4,10 +4,10 @@ import numpy as np
 import tensorflow as tf
 
 
-class PostModel(tf.keras.Model):
+class CPostModel(tf.keras.Model):
     def __init__(self, pred_model, n_objs, k_pairings, top_k_n, kp_thres,
                  nms_iou_thres, resize_shape, *args, **kwargs):
-        super(PostModel, self).__init__(*args, **kwargs)
+        super(CPostModel, self).__init__(*args, **kwargs)
         self.pred_model = pred_model
         self.n_objs = n_objs
         self.top_k_n = top_k_n
@@ -74,7 +74,7 @@ class PostModel(tf.keras.Model):
         b_scores = tf.transpose(b_scores, [0, 2, 1])
 
         b_bboxes = tf.concat([b_bboxes, b_scores[..., None]], axis=-1)
-
+        
         mask = b_scores > self.kp_thres
         index = tf.where(mask == True)
         n = tf.shape(index)[0]
@@ -85,7 +85,7 @@ class PostModel(tf.keras.Model):
         output = tf.tensor_scatter_nd_update(output, index, b_bboxes[mask])
         scores = output[..., -1]
         output = output[..., :-1]
-
+        # [B, N, Cate, 4]
         nms_reuslt = tf.image.combined_non_max_suppression(
             output,
             scores,
