@@ -12,6 +12,7 @@ class BehaviorPredictor:
     def __init__(self, config=None):
         self.config = config
         os.environ['CUDA_VISIBLE_DEVICES'] = self.config['visible_gpu']
+        self.gpu_setting(0.3)
         if self.config is not None:
             self.mode = self.config['mode']
             self.top_k_n = self.config['top_k_n']
@@ -46,11 +47,25 @@ class BehaviorPredictor:
     def pred(self, imgs, origin_shapes):
         imgs = list(
             map(
-                lambda x: cv2.resize(x, tuple(self.img_input_size))[:, :, ::-1]
+                lambda x: cv2.resize(x,
+                                     tuple(self.img_input_size),
+                                     interpolation=cv2.INTER_AREA)[:, :, ::-1]
                 / 255.0, imgs))
         imgs = np.asarray(imgs)
         origin_shapes = np.asarray(origin_shapes)
         imgs = tf.cast(imgs, tf.float32)
         origin_shapes = tf.cast(origin_shapes, tf.float32)
+        star_time = time.time()
         rets = self._post_model([imgs, origin_shapes])
+        # print("%.3f" % (time.time() - star_time))
         return rets
+
+    def gpu_setting(self, fraction):
+        gpus = tf.config.experimental.list_physical_devices('GPU')
+        gpu_config = tf.compat.v1.ConfigProto()
+        gpu_config.gpu_options.allow_growth = True
+        gpu_config.gpu_options.per_process_gpu_memory_fraction = fraction
+        tf.compat.v1.keras.backend.set_session(
+            tf.compat.v1.Session(config=gpu_config))
+        for i in range(len(gpus)):
+            tf.config.experimental.set_memory_growth(gpus[i], True)

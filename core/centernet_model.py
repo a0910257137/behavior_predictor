@@ -24,6 +24,7 @@ class CPostModel(tf.keras.Model):
         self.resize_ratio = tf.cast(origin_shapes / self.resize_shape,
                                     tf.dtypes.float32)
         preds = self.pred_model(imgs, training=False)
+
         b_bboxes = self._obj_detect(batch_size, preds['obj_heat_map'],
                                     preds['obj_size_maps'])
         return b_bboxes
@@ -74,7 +75,7 @@ class CPostModel(tf.keras.Model):
         b_scores = tf.transpose(b_scores, [0, 2, 1])
 
         b_bboxes = tf.concat([b_bboxes, b_scores[..., None]], axis=-1)
-        
+
         mask = b_scores > self.kp_thres
         index = tf.where(mask == True)
         n = tf.shape(index)[0]
