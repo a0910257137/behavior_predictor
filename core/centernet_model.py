@@ -17,14 +17,13 @@ class CPostModel(tf.keras.Model):
         self.k_pairings = k_pairings
         self.base = Base()
 
-    # @tf.function
+    @tf.function
     def call(self, x, training=False):
         imgs, origin_shapes = x
         batch_size = tf.shape(imgs)[0]
         self.resize_ratio = tf.cast(origin_shapes / self.resize_shape,
                                     tf.dtypes.float32)
         preds = self.pred_model(imgs, training=False)
-
         b_bboxes = self._obj_detect(batch_size, preds['obj_heat_map'],
                                     preds['obj_size_maps'])
         return b_bboxes

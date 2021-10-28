@@ -12,7 +12,7 @@ class BehaviorPredictor:
     def __init__(self, config=None):
         self.config = config
         os.environ['CUDA_VISIBLE_DEVICES'] = self.config['visible_gpu']
-        self.gpu_setting(0.3)
+        self.gpu_setting(self.config["gpu_fraction"])
         if self.config is not None:
             self.mode = self.config['mode']
             self.top_k_n = self.config['top_k_n']
@@ -56,7 +56,7 @@ class BehaviorPredictor:
         imgs = tf.cast(imgs, tf.float32)
         origin_shapes = tf.cast(origin_shapes, tf.float32)
         star_time = time.time()
-        rets = self._post_model([imgs, origin_shapes])
+        rets = self._post_model([imgs, origin_shapes], training=False)
         # print("%.3f" % (time.time() - star_time))
         return rets
 
