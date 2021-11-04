@@ -4,8 +4,7 @@ import cv2
 import os
 import time
 from pprint import pprint
-from .core.anchor_model import APostModel
-from .core.centernet_model import CPostModel
+from .core import *
 
 
 class BehaviorPredictor:
@@ -42,6 +41,10 @@ class BehaviorPredictor:
                                               self.k_pairings, self.top_k_n,
                                               self.kp_thres,
                                               self.nms_iou_thres,
+                                              self.resize_shape)
+            elif self.mode == 'landmark':
+                self.n_landmarks = self.config['n_landmarks']
+                self._post_model = LPostModel(self._model, self.n_landmarks,
                                               self.resize_shape)
 
     def pred(self, imgs, origin_shapes):

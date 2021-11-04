@@ -93,10 +93,12 @@ class CPostModel(tf.keras.Model):
             self.n_objs,
             iou_threshold=self.nms_iou_thres,
             clip_boxes=False)
-        b_bboxes = tf.concat([
-            nms_reuslt[0], nms_reuslt[1][..., None], nms_reuslt[2][..., None]
-        ],
-                             axis=-1)
-        b_bboxes = tf.where(b_bboxes == -1., np.inf, b_bboxes)
+        box_results = tf.where(nms_reuslt[0] == -1., np.inf, nms_reuslt[0])
+        box_results = tf.where((box_results - 1.) == -1., np.inf, box_results)
+
+        b_bboxes = tf.concat(
+            [box_results, nms_reuslt[1][..., None], nms_reuslt[2][..., None]],
+            axis=-1)
+        # b_bboxes = tf.where(b_bboxes == -1., np.inf, b_bboxes)
         b_bboxes = tf.reshape(b_bboxes, [-1, self.n_objs, 6])
         return b_bboxes
