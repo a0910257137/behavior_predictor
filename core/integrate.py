@@ -1,13 +1,15 @@
 from pprint import pprint
+
 from .base import Base
 import numpy as np
 import tensorflow as tf
+# import nametuple
 
 
-class CPostModel(tf.keras.Model):
+class IntegratePostModel(tf.keras.Model):
     def __init__(self, pred_model, n_objs, k_pairings, top_k_n, kp_thres,
                  nms_iou_thres, resize_shape, *args, **kwargs):
-        super(CPostModel, self).__init__(*args, **kwargs)
+        super(IntegratePostModel, self).__init__(*args, **kwargs)
         self.pred_model = pred_model
         self.n_objs = n_objs
         self.top_k_n = top_k_n
@@ -24,24 +26,55 @@ class CPostModel(tf.keras.Model):
         self.resize_ratio = tf.cast(origin_shapes / self.resize_shape,
                                     tf.dtypes.float32)
         preds = self.pred_model(imgs, training=False)
-        b_bboxes = self._obj_detect(batch_size, preds['obj_heat_map'],
-                                    preds['obj_size_maps'])
-        return b_bboxes
+        b_bboxes, b_lnmk_infos = self._obj_detect(batch_size,
+                                                  preds["obj_heat_map"],
+                                                  preds['obj_size_maps'])
+        return b_bboxes, b_lnmk_infos
 
-    @tf.function
+    # @tf.function
     def _obj_detect(self, batch_size, hms, size_maps):
+        def deal_lnmks(b, res_c, lnmk_hms, b_lnmks, b_idxs):
+
+            b_idxs = tf.tile(b_idxs, (1, res_c, 1, 1))
+            b_c_idxs = tf.tile(
+                tf.range(0, res_c, dtype=tf.int32)[tf.newaxis, :, tf.newaxis,
+                                                   tf.newaxis],
+                [b, 1, self.top_k_n, 1])
+
+            b_infos = tf.concat([b_idxs, b_lnmks, b_c_idxs], axis=-1)
+
+            b_lnmk_scores = tf.gather_nd(lnmk_hms, b_infos)
+            b_valid_lnmks = b_lnmk_scores > 0.4
+            b_lnmks = tf.cast(b_lnmks, tf.float32)
+
+            b_lnmks = tf.einsum('b d n c , b c -> b d n c', b_lnmks,
+                                self.resize_ratio)
+
+            return b_lnmks, b_lnmk_scores, b_valid_lnmks
+
         hms = self.base.apply_max_pool(hms)
-        mask = hms > self.kp_thres
-        b, h, w, c = tf.shape(hms)[0], tf.shape(hms)[1], tf.shape(
-            hms)[2], tf.shape(hms)[3]
-        output = -tf.ones(shape=(batch_size, self.n_objs, c, 5))
+
+        b, h, w, c = [tf.shape(hms)[i] for i in range(4)]
+
         b_coors = self.base.top_k_loc(hms, self.top_k_n, h, w, c)
+
+        b_lnmks = b_coors[:, 1:, ...]
+
+        b_coors = b_coors[:, :1, ...]
+
+        res_c = c - 1
+        c = c - res_c
+
+        output = -tf.ones(shape=(batch_size, self.n_objs, c, 5))
+
         b_idxs = tf.tile(
             tf.range(0, b, dtype=tf.int32)[:, tf.newaxis, tf.newaxis,
                                            tf.newaxis],
             [1, c, self.top_k_n, 1],
         )
+
         b_infos = tf.concat([b_idxs, b_coors], axis=-1)
+        # only pick bbox
 
         b_size_vals = tf.gather_nd(size_maps, b_infos)
 
@@ -50,11 +83,13 @@ class CPostModel(tf.keras.Model):
                                            tf.newaxis],
             [b, 1, self.top_k_n, 1])
 
+        b_lnmks, b_lnmk_scores, b_valid_lnmks = deal_lnmks(
+            b, res_c, hms[..., -1:], b_lnmks, b_idxs)
+
         b_infos = tf.concat([b_infos, b_c_idxs], axis=-1)
         b_scores = tf.gather_nd(hms, b_infos)
 
         b_centers = tf.cast(b_coors, tf.float32)
-
         b_tls = (b_centers - b_size_vals / 2)
         b_brs = (b_centers + b_size_vals / 2)
         # clip value
@@ -99,6 +134,7 @@ class CPostModel(tf.keras.Model):
         b_bboxes = tf.concat(
             [box_results, nms_reuslt[1][..., None], nms_reuslt[2][..., None]],
             axis=-1)
-        # b_bboxes = tf.where(b_bboxes == -1., np.inf, b_bboxes)
+
         b_bboxes = tf.reshape(b_bboxes, [-1, self.n_objs, 6])
-        return b_bboxes
+
+        return b_bboxes, (b_lnmks, b_lnmk_scores, b_valid_lnmks)

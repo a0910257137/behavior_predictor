@@ -32,28 +32,32 @@ class BehaviorPredictor:
                                               self.reg_max, self.top_k_n,
                                               self.nms_iou_thres,
                                               self.box_score)
-
             elif self.mode == 'centernet':
                 self.kp_thres = self.config['kp_thres']
                 self.n_objs = self.config['n_objs']
                 self.k_pairings = self.config['k_pairings']
-                self._post_model = CPostModel(self._model, self.n_objs,
-                                              self.k_pairings, self.top_k_n,
-                                              self.kp_thres,
-                                              self.nms_iou_thres,
-                                              self.resize_shape)
+
+                self._post_model = IntegratePostModel(
+                    self._model, self.n_objs, self.k_pairings, self.top_k_n,
+                    self.kp_thres, self.nms_iou_thres, self.resize_shape)
+                # self._post_model = CPostModel(self._model, self.n_objs,
+                #                               self.k_pairings, self.top_k_n,
+                #                               self.kp_thres,
+                #                               self.nms_iou_thres,
+                #                               self.resize_shape)
             elif self.mode == 'landmark':
                 self.n_landmarks = self.config['n_landmarks']
                 self._post_model = LPostModel(self._model, self.n_landmarks,
                                               self.resize_shape)
 
     def pred(self, imgs, origin_shapes):
+
         imgs = list(
             map(
                 lambda x: cv2.resize(x,
                                      tuple(self.img_input_size),
-                                     interpolation=cv2.INTER_AREA)[:, :, ::-1]
-                / 255.0, imgs))
+                                     interpolation=cv2.INTER_AREA)[..., ::-1] /
+                255.0, imgs))
         imgs = np.asarray(imgs)
         origin_shapes = np.asarray(origin_shapes)
         imgs = tf.cast(imgs, tf.float32)
