@@ -25,17 +25,10 @@ class IntegratePostModel(tf.keras.Model):
                                     tf.dtypes.float32)
         preds = self.pred_model(imgs, training=False)
 
-<<<<<<< HEAD
         b_bboxes, b_lnmks, b_ENM, b_nose_scores = self._obj_detect(
             batch_size, preds["obj_heat_map"], preds['obj_offset_map'],
             preds['obj_size_maps'])
         return b_bboxes, b_lnmks, b_ENM, b_nose_scores
-=======
-        b_bboxes, b_ENM = self._obj_detect(batch_size, preds["obj_heat_map"],
-                                           preds['obj_offset_map'],
-                                           preds['obj_size_maps'])
-        return b_bboxes, b_ENM
->>>>>>> 124fc281280358b3ddb8e615470176828b319f64
         # b_bboxes, b_lnmk_infos = self._obj_detect(batch_size,
         #                                           preds["obj_heat_map"],
         #                                           preds['obj_offset_map'],
@@ -84,7 +77,6 @@ class IntegratePostModel(tf.keras.Model):
             [1, c, self.top_k_n, 1],
         )
 
-<<<<<<< HEAD
         nose_scores = tf.gather_nd(hms[..., 1],
                                    tf.concat([b_idxs, b_lnmks], axis=-1))
         b_lnmks = b_lnmks[nose_scores > 0.5]
@@ -92,8 +84,6 @@ class IntegratePostModel(tf.keras.Model):
 
         b_lnmks = tf.math.reduce_mean(b_lnmks, axis=0, keepdims=True)
         b_lnmks = tf.reshape(b_lnmks, (batch_size, -1, 2))
-=======
->>>>>>> 124fc281280358b3ddb8e615470176828b319f64
         b_infos = tf.concat([b_idxs, b_coors], axis=-1)
         # only pick bbox
 
@@ -158,7 +148,6 @@ class IntegratePostModel(tf.keras.Model):
             axis=-1)
 
         b_bboxes = tf.reshape(b_bboxes, [-1, self.n_objs, 6])
-<<<<<<< HEAD
         b_lnmks, b_ENM = self._offset_vec_nose(batch_size, b_lnmks,
                                                offset_maps, b_bboxes)
 
@@ -189,17 +178,10 @@ class IntegratePostModel(tf.keras.Model):
         return b_lnmks, b_ENM
 
     def _offset_vec(self, batch_size, offset_maps, b_bboxes):
-=======
-
->>>>>>> 124fc281280358b3ddb8e615470176828b319f64
         b_centers = (b_bboxes[:, :, :2] + b_bboxes[:, :, 2:4]) / 2
         valid_mask = tf.tile(tf.math.is_finite(b_centers), [1, 1, 5])
         b_centers = tf.einsum('b n d , b d -> b n d', b_centers,
                               1 / self.resize_ratio)
-<<<<<<< HEAD
-=======
-
->>>>>>> 124fc281280358b3ddb8e615470176828b319f64
         b_idx = tf.tile(
             tf.range(batch_size, dtype=tf.float32)[:, None, None],
             [1, self.n_objs, 1])
@@ -214,11 +196,4 @@ class IntegratePostModel(tf.keras.Model):
         b_centers = tf.tile(b_centers[:, :, None, 1:], [1, 1, 5, 1])
         b_ENM = tf.cast(b_centers, tf.float32) + b_offset_vals
         b_ENM = tf.einsum('b n c d, b d -> b n c d', b_ENM, self.resize_ratio)
-<<<<<<< HEAD
         return tf.reshape(b_ENM, (batch_size, self.n_objs, 10))
-=======
-        # offset version
-        return b_bboxes, b_ENM
-        # heatmap version find eyes, nose, and  mouth
-        # return b_bboxes, (b_lnmks, b_lnmk_scores, b_valid_lnmks)
->>>>>>> 124fc281280358b3ddb8e615470176828b319f64
