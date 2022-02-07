@@ -36,7 +36,6 @@ class BehaviorPredictor:
                                               self.reg_max, self.top_k_n,
                                               self.nms_iou_thres,
                                               self.box_score)
-
             elif self.mode == 'centernet':
 
                 self._post_model = CPostModel(self._model, self.n_objs,
@@ -59,6 +58,7 @@ class BehaviorPredictor:
                     self.kp_thres, self.nms_iou_thres, self.resize_shape)
 
     def pred(self, imgs, origin_shapes):
+
         imgs = list(
             map(
                 lambda x: cv2.resize(x,

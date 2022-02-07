@@ -17,7 +17,7 @@ class CPostModel(tf.keras.Model):
         self.k_pairings = k_pairings
         self.base = Base()
 
-    @tf.function
+    # @tf.function
     def call(self, x, training=False):
         imgs, origin_shapes = x
         batch_size = tf.shape(imgs)[0]

@@ -1,10 +1,11 @@
 import tensorflow as tf
 
+
 class Base:
     def top_k_loc(self, hms, k, h, w, c):
         flat_hms = tf.reshape(hms, [-1, h * w, c])
         flat_hms = tf.transpose(flat_hms, [0, 2, 1])
-        scores, indices = tf.math.top_k(flat_hms, k)
+        scores, indices = tf.math.top_k(flat_hms, k, sorted=False)
         xs = tf.expand_dims(indices % w, axis=-1)
         ys = tf.expand_dims(indices // w, axis=-1)
         b_coors = tf.concat([ys, xs], axis=-1)
