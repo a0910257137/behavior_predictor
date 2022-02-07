@@ -1,3 +1,4 @@
+from xmlrpc.client import FastMarshaller
 import tensorflow as tf
 import numpy as np
 import cv2
@@ -20,6 +21,9 @@ class BehaviorPredictor:
             self.nms_iou_thres = self.config['nms_iou_thres']
             self.resize_shape = np.asarray(config['resize_size'])
             self._model = tf.keras.models.load_model(self.model_dir)
+            self.kp_thres = self.config['kp_thres']
+            self.n_objs = self.config['n_objs']
+            self.k_pairings = self.config['k_pairings']
             if self.mode == 'anchor':
                 self.strides = tf.constant(self.config['strides'],
                                            dtype=tf.float32)
@@ -34,9 +38,7 @@ class BehaviorPredictor:
                                               self.box_score)
 
             elif self.mode == 'centernet':
-                self.kp_thres = self.config['kp_thres']
-                self.n_objs = self.config['n_objs']
-                self.k_pairings = self.config['k_pairings']
+
                 self._post_model = CPostModel(self._model, self.n_objs,
                                               self.k_pairings, self.top_k_n,
                                               self.kp_thres,
@@ -47,13 +49,22 @@ class BehaviorPredictor:
                 self._post_model = LPostModel(self._model, self.n_landmarks,
                                               self.resize_shape)
 
+            elif self.mode == 'offset_v2':
+                self._post_model = OffsetV2PostModel(
+                    self._model, self.n_objs, self.k_pairings, self.top_k_n,
+                    self.kp_thres, self.nms_iou_thres, self.resize_shape)
+            elif self.mode == 'offset_v3':
+                self._post_model = OffsetV3PostModel(
+                    self._model, self.n_objs, self.k_pairings, self.top_k_n,
+                    self.kp_thres, self.nms_iou_thres, self.resize_shape)
+
     def pred(self, imgs, origin_shapes):
         imgs = list(
             map(
                 lambda x: cv2.resize(x,
                                      tuple(self.img_input_size),
-                                     interpolation=cv2.INTER_AREA)[:, :, ::-1]
-                / 255.0, imgs))
+                                     interpolation=cv2.INTER_AREA)[..., ::-1] /
+                255.0, imgs))
         imgs = np.asarray(imgs)
         origin_shapes = np.asarray(origin_shapes)
         imgs = tf.cast(imgs, tf.float32)

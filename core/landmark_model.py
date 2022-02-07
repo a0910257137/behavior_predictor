@@ -11,7 +11,7 @@ class LPostModel(tf.keras.Model):
 
         self.resize_shape = tf.cast(resize_shape, tf.float32)
 
-    # @tf.function
+    @tf.function
     def call(self, x, training=False):
         imgs, origin_shapes = x
         batch_size = tf.shape(imgs)[0]
@@ -25,5 +25,4 @@ class LPostModel(tf.keras.Model):
                                 self.resize_shape)
         b_landmarks = tf.einsum('b c d, b d ->b c d', b_landmarks,
                                 self.resize_ratio)
-
         return b_landmarks
