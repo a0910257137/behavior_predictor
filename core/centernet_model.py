@@ -5,8 +5,8 @@ import tensorflow as tf
 
 
 class CPostModel(tf.keras.Model):
-    def __init__(self, pred_model, n_objs, k_pairings, top_k_n, kp_thres,
-                 nms_iou_thres, resize_shape, *args, **kwargs):
+    def __init__(self, pred_model, n_objs, top_k_n, kp_thres, nms_iou_thres,
+                 resize_shape, *args, **kwargs):
         super(CPostModel, self).__init__(*args, **kwargs)
         self.pred_model = pred_model
         self.n_objs = n_objs
@@ -14,7 +14,6 @@ class CPostModel(tf.keras.Model):
         self.kp_thres = kp_thres
         self.nms_iou_thres = nms_iou_thres
         self.resize_shape = tf.cast(resize_shape, tf.float32)
-        self.k_pairings = k_pairings
         self.base = Base()
 
     # @tf.function
