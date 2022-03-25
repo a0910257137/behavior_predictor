@@ -4,17 +4,16 @@ import numpy as np
 import tensorflow as tf
 
 
-class OffsetV3PostModel(tf.keras.Model):
-    def __init__(self, pred_model, n_objs, k_pairings, top_k_n, kp_thres,
-                 nms_iou_thres, resize_shape, *args, **kwargs):
-        super(OffsetV3PostModel, self).__init__(*args, **kwargs)
+class OffsetPostModel(tf.keras.Model):
+    def __init__(self, pred_model, n_objs, top_k_n, kp_thres, nms_iou_thres,
+                 resize_shape, *args, **kwargs):
+        super(OffsetPostModel, self).__init__(*args, **kwargs)
         self.pred_model = pred_model
         self.n_objs = n_objs
         self.top_k_n = top_k_n
         self.kp_thres = kp_thres
         self.nms_iou_thres = nms_iou_thres
         self.resize_shape = tf.cast(resize_shape, tf.float32)
-        self.k_pairings = k_pairings
         self.base = Base()
 
     @tf.function
@@ -30,7 +29,7 @@ class OffsetV3PostModel(tf.keras.Model):
             preds['obj_size_maps'])
         return b_bboxes, b_lnmks, b_nose_scores
 
-    @tf.function
+    # @tf.function
     def _obj_detect(self, batch_size, hms, offset_maps, size_maps):
 
         hms = self.base.apply_max_pool(hms)
@@ -62,9 +61,16 @@ class OffsetV3PostModel(tf.keras.Model):
         b_lnmks = tf.reshape(b_lnmks, (batch_size, n, 1, d))
         b_nose_scores = tf.reshape(b_nose_scores, (batch_size, n))
         b_infos = tf.concat([b_idxs, b_coors], axis=-1)
-        # only pick bbox
-        b_size_vals = tf.gather_nd(size_maps, b_infos)
 
+        # hm_scrs = tf.gather_nd(hms[..., :1], b_infos)
+        # mask = hm_scrs > 0.5
+        # mask = tf.squeeze(mask, axis=-1)
+        # coors = b_coors[mask]
+
+        # only pick bbox
+        # flatten_size_maps = tf.reshape(size_maps, [-1])
+        # print(flatten_size_maps[104 * 185 * 2])
+        b_size_vals = tf.gather_nd(size_maps, b_infos)
         b_c_idxs = tf.tile(
             tf.range(0, c, dtype=tf.int32)[tf.newaxis, :, tf.newaxis,
                                            tf.newaxis],
@@ -103,6 +109,7 @@ class OffsetV3PostModel(tf.keras.Model):
         index = tf.cast(tf.tile(index[:, tf.newaxis, :], [1, d, 1]), tf.int32)
         index = tf.concat([index, c_idx], axis=-1)
         output = tf.tensor_scatter_nd_update(output, index, b_bboxes[mask])
+
         scores = output[..., -1]
         output = output[..., :-1]
         # [B, N, Cate, 4]
@@ -119,22 +126,23 @@ class OffsetV3PostModel(tf.keras.Model):
         b_bboxes = tf.concat(
             [box_results, nms_reuslt[1][..., None], nms_reuslt[2][..., None]],
             axis=-1)
-
         b_bboxes = tf.reshape(b_bboxes, [-1, self.n_objs, 6])
-        b_lnmks = self._offset_vec_nose(n, batch_size, b_lnmks, offset_maps)
+
+        b_lnmks = self._offset_vec_nose(batch_size, b_lnmks, offset_maps)
+
         return b_bboxes, b_lnmks, b_nose_scores
 
-    @tf.function
-    def _offset_vec_nose(self, n, batch_size, b_lnmks, offset_maps):
+    # @tf.function
+    def _offset_vec_nose(self, batch_size, b_lnmks, offset_maps):
         b_nose_lnmks = tf.squeeze(b_lnmks, axis=-2)
         _, n, d = [tf.shape(b_nose_lnmks)[i] for i in range(3)]
         b_idx = tf.tile(
             tf.range(batch_size, dtype=tf.int32)[:, None, None], [1, n, 1])
+        b_idx = tf.concat([b_idx, b_nose_lnmks], axis=-1)
 
-        b_offset_vect = tf.gather_nd(offset_maps,
-                                     tf.concat([b_idx, b_nose_lnmks], axis=-1))
+        b_offset_vect = tf.gather_nd(offset_maps, b_idx)
 
-        b_offset_vect = tf.reshape(b_offset_vect, (batch_size, n, 4, d))
+        b_offset_vect = tf.reshape(b_offset_vect, (batch_size, n, 4, 2))
         b_lnmks = tf.cast(b_nose_lnmks[:, :, None, :], tf.float32)
         b_ENM = b_lnmks - b_offset_vect
         b_lnmks = tf.concat([b_ENM[:, :, :2], b_lnmks, b_ENM[:, :, 2:, :]],
