@@ -7,6 +7,7 @@ import os
 
 
 class Lite:
+
     def __init__(self, interpreter, n_objs, top_k_n, kp_thres, nms_iou_thres,
                  resize_shape, *args, **kwargs):
         self.interpreter = interpreter
@@ -72,7 +73,7 @@ class Lite:
         de_map_vals = np.asarray(scale).astype(np.float32) * shifted_vals
         return de_map_vals
 
-    @tf.function
+    # @tf.function
     def _obj_detect(self, batch_size, hms, offset_maps, size_maps):
 
         hms = self.base.apply_max_pool(hms)

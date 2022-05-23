@@ -74,7 +74,7 @@ class Optimize:
         de_map_vals = np.asarray(scale).astype(np.float32) * shifted_vals
         return de_map_vals
 
-    # @tf.function
+    @tf.function
     def _obj_detect(self, batch_size, hms, x):
         hms = self.base.apply_max_pool(hms)
         b, h, w, c = [tf.shape(hms)[i] for i in range(4)]

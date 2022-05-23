@@ -16,7 +16,7 @@ class GPostModel(tf.keras.Model):
         self.resize_shape = tf.cast(resize_shape, tf.float32)
         self.base = Base()
 
-    # @tf.function
+    @tf.function
     def call(self, x, training=False):
         imgs, origin_shapes = x
         batch_size = tf.shape(imgs)[0]
