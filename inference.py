@@ -3,7 +3,6 @@ import numpy as np
 import cv2
 import os
 import time
-from pprint import pprint
 from .core import *
 
 
@@ -12,62 +11,65 @@ class BehaviorPredictor:
         self.config = config
         os.environ['CUDA_VISIBLE_DEVICES'] = self.config['visible_gpu']
         self.gpu_setting(self.config["gpu_fraction"])
-        if self.config is not None:
-            self.mode = self.config['mode']
-            self.top_k_n = self.config['top_k_n']
-            self.model_dir = self.config['pb_path']
-            self.img_input_size = self.config['img_input_size']
-            self.nms_iou_thres = self.config['nms_iou_thres']
-            self.resize_shape = np.asarray(config['resize_size'])
-            self._model = tf.keras.models.load_model(self.model_dir)
-            self.kp_thres = self.config['kp_thres']
-            self.n_objs = self.config['n_objs']
-            if self.mode == 'anchor':
-                self.strides = tf.constant(self.config['strides'],
-                                           dtype=tf.float32)
-                self.scale_factor = self.config['scale_factor']
-                self.reg_max = self.config['reg_max']
-                self.nms_iou_thres = self.config['nms_iou_thres']
-                self.box_score = self.config['box_score']
-                self._post_model = APostModel(self.resize_shape, self._model,
-                                              self.strides, self.scale_factor,
-                                              self.reg_max, self.top_k_n,
-                                              self.nms_iou_thres,
-                                              self.box_score)
-            elif self.mode == 'centernet':
-                self._post_model = CPostModel(self._model, self.n_objs,
-                                              self.top_k_n, self.kp_thres,
-                                              self.nms_iou_thres,
-                                              self.resize_shape)
-            elif self.mode == 'landmark':
-                self.n_landmarks = self.config['n_landmarks']
-                self._post_model = LPostModel(self._model, self.n_landmarks,
-                                              self.resize_shape)
+        self.model_dir = self.config['pb_path']
+        self.top_k_n = self.config['top_k_n']
+        self.img_input_size = self.config['img_input_size']
+        self.nms_iou_thres = self.config['nms_iou_thres']
+        self.resize_shape = np.asarray(config['resize_size'])
+        self._model = tf.keras.models.load_model(self.model_dir)
+        self.kp_thres = self.config['kp_thres']
+        self.n_objs = self.config['n_objs']
+        self.mode = self.config['mode']
+        if self.mode == 'tflite_offset':
+            # Load the TFLite model and allocate tensors.
+            # Later, I wil pubilished optimzation method in post-precess.
+            interpreter = tf.lite.Interpreter(
+                model_path=os.path.join(self.model_dir, "model.tflite"))
+            self._post_model = Lite(interpreter, self.n_objs, self.top_k_n,
+                                    self.kp_thres, self.nms_iou_thres,
+                                    self.resize_shape)
+            self.is_tflite = True
+            # self._post_model = Optimize(interpreter, self.n_objs, self.top_k_n,
+            #                             self.kp_thres, self.nms_iou_thres,
+            #                             self.resize_shape)
 
-            elif self.mode == 'offset':
-                self._post_model = OffsetPostModel(self._model, self.n_objs,
-                                                   self.top_k_n, self.kp_thres,
-                                                   self.nms_iou_thres,
-                                                   self.resize_shape)
-            elif self.mode == '1d_G':
-                self._post_model = GPostModel(self._model, self.n_objs,
-                                              self.top_k_n, self.kp_thres,
-                                              self.nms_iou_thres,
-                                              self.resize_shape)
-            elif self.mode == 'classification':
-                self._post_model = CLSPostModel(self._model)
+        if self.mode == 'centernet':
+            self._post_model = CPostModel(self._model, self.n_objs,
+                                          self.top_k_n, self.kp_thres,
+                                          self.nms_iou_thres,
+                                          self.resize_shape)
+
+        elif self.mode == 'offset':
+            self._post_model = OffsetPostModel(self._model, self.n_objs,
+                                               self.top_k_n, self.kp_thres,
+                                               self.nms_iou_thres,
+                                               self.resize_shape)
+        elif self.mode == '1d_G':
+            self._post_model = GPostModel(self._model, self.n_objs,
+                                          self.top_k_n, self.kp_thres,
+                                          self.nms_iou_thres,
+                                          self.resize_shape)
+        elif self.mode == 'classification':
+            self._post_model = CLSPostModel(self._model)
 
     def pred(self, imgs, origin_shapes):
-        imgs = list(
-            map(
-                lambda x: cv2.resize(x,
-                                     tuple(self.img_input_size),
-                                     interpolation=cv2.INTER_AREA)[..., ::-1] /
-                255.0, imgs))
-        imgs = np.asarray(imgs)
-        origin_shapes = np.asarray(origin_shapes)
-        imgs = tf.cast(imgs, tf.float32)
-        origin_shapes = tf.cast(origin_shapes, tf.float32)
+        origin_shapes = tf.cast(np.asarray(origin_shapes), tf.float32)
+        if self.is_tflite:
+            imgs = list(
+                map(
+                    lambda x: cv2.resize(
+                        x, tuple((320, 192)), interpolation=cv2.INTER_AREA)[
+                            ..., ::-1] / 255.0, imgs))
+            imgs = tf.cast(np.asarray(imgs), tf.float32)
+        else:
+            imgs = list(
+                map(
+                    lambda x: cv2.resize(x,
+                                         tuple(self.img_input_size),
+                                         interpolation=cv2.INTER_AREA)[
+                                             ..., ::-1] / 255.0, imgs))
+            imgs = np.asarray(imgs)
+            imgs = tf.cast(imgs, tf.float32)
         star_time = time.time()
         rets = self._post_model([imgs, origin_shapes], training=False)
         # print("%.3f" % (time.time() - star_time))
