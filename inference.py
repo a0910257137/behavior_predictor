@@ -21,10 +21,9 @@ class BehaviorPredictor:
         self.n_objs = self.config['n_objs']
         self.mode = self.config['mode']
         if self.mode == 'tflite':
-            # tf-lite version
             self.weight_root = self.config["weight_root"]
             interpreter = tf.lite.Interpreter(
-                model_path=os.path.join(self.model_dir, "INT8.tflite"))
+                model_path=os.path.join(self.model_dir, "FP32.tflite"))
             self._post_model = Optimize(interpreter, self.weight_root,
                                         self.n_objs, self.top_k_n,
                                         self.kp_thres, self.nms_iou_thres,

@@ -62,9 +62,9 @@ class Optimize:
                 pred_branches[key] = tf.cast(pred_maps[..., :2], tf.float32)
             else:
                 pred_branches[key] = tf.cast(pred_maps, tf.float32)
+
         b_bboxes, b_lnmks, b_nose_scores = self._obj_detect(
             batch_size, pred_branches["hms"], pred_branches['x'])
-
         return b_bboxes, b_lnmks, b_nose_scores
 
     def _quantized(self, map_vals, infos):
@@ -225,12 +225,24 @@ class Optimize:
         return b_conv_x
 
     def _point_vectors(self, batch_size, b_idxs, x_maps, feat_maps, b_kps):
+        def boundary(b_kps, b_scores):
+            b_kps_y, b_kps_x = b_kps[:, 0], b_kps[:, 1]
+
+            mask_y = tf.cast(b_kps_y < 191, tf.float32) * tf.cast(
+                b_kps_y > 0, tf.float32)
+
+            mask_x = tf.cast(b_kps_x < 319, tf.float32) * tf.cast(
+                b_kps_x > 0, tf.float32)
+            mask = tf.cast(mask_y * mask_x, tf.bool)
+            b_kps = b_kps[mask]
+            b_scores = b_scores[mask]
+            return b_kps, b_scores
+
         scores = tf.gather_nd(feat_maps, tf.concat([b_idxs, b_kps], axis=-1))
         mask = scores > 0.5
-        b_kps = b_kps[mask]
-
+        b_kps, b_scores = b_kps[mask], scores[mask]
+        b_kps, b_scores = boundary(b_kps, b_scores)
         b_grid_kps = b_kps
-        b_scores = scores[mask]
 
         n, d = [tf.shape(b_grid_kps)[i] for i in range(2)]
         b_kps = tf.reshape(b_kps, (-1, n, d))
@@ -243,6 +255,8 @@ class Optimize:
 
         # in order to fit the seperatable convolution
         b_grid_kps = b_grid_kps + self.grid
+        # add a check is out side grid excluded it
+
         grid_n = 9
         b_grid_kps = tf.reshape(b_grid_kps, (1, grid_n * n, d))
         b_idx = tf.tile(
