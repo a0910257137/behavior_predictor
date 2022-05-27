@@ -21,6 +21,7 @@ class BehaviorPredictor:
         self.n_objs = self.config['n_objs']
         self.mode = self.config['mode']
         if self.mode == 'tflite':
+            # tf-lite version
             self.weight_root = self.config["weight_root"]
             interpreter = tf.lite.Interpreter(
                 model_path=os.path.join(self.model_dir, "INT8.tflite"))
