@@ -20,18 +20,14 @@ class BehaviorPredictor:
         self.kp_thres = self.config['kp_thres']
         self.n_objs = self.config['n_objs']
         self.mode = self.config['mode']
-        if self.mode == 'tflite_offset':
-            # Load the TFLite model and allocate tensors.
-            # Later, I wil pubilished optimzation method in post-precess.
+        if self.mode == 'tflite':
+            self.weight_root = self.config["weight_root"]
             interpreter = tf.lite.Interpreter(
-                model_path=os.path.join(self.model_dir, "model.tflite"))
-            self._post_model = Lite(interpreter, self.n_objs, self.top_k_n,
-                                    self.kp_thres, self.nms_iou_thres,
-                                    self.resize_shape)
-            self.is_tflite = True
-            # self._post_model = Optimize(interpreter, self.n_objs, self.top_k_n,
-            #                             self.kp_thres, self.nms_iou_thres,
-            #                             self.resize_shape)
+                model_path=os.path.join(self.model_dir, "INT8.tflite"))
+            self._post_model = Optimize(interpreter, self.weight_root,
+                                        self.n_objs, self.top_k_n,
+                                        self.kp_thres, self.nms_iou_thres,
+                                        self.resize_shape)
 
         if self.mode == 'centernet':
             self._post_model = CPostModel(self._model, self.n_objs,
@@ -54,22 +50,14 @@ class BehaviorPredictor:
 
     def pred(self, imgs, origin_shapes):
         origin_shapes = tf.cast(np.asarray(origin_shapes), tf.float32)
-        if self.is_tflite:
-            imgs = list(
-                map(
-                    lambda x: cv2.resize(
-                        x, tuple((320, 192)), interpolation=cv2.INTER_AREA)[
-                            ..., ::-1] / 255.0, imgs))
-            imgs = tf.cast(np.asarray(imgs), tf.float32)
-        else:
-            imgs = list(
-                map(
-                    lambda x: cv2.resize(x,
-                                         tuple(self.img_input_size),
-                                         interpolation=cv2.INTER_AREA)[
-                                             ..., ::-1] / 255.0, imgs))
-            imgs = np.asarray(imgs)
-            imgs = tf.cast(imgs, tf.float32)
+        imgs = list(
+            map(
+                lambda x: cv2.resize(x,
+                                     tuple(self.img_input_size),
+                                     interpolation=cv2.INTER_AREA)[..., ::-1] /
+                255.0, imgs))
+        imgs = np.asarray(imgs)
+        imgs = tf.cast(imgs, tf.float32)
         star_time = time.time()
         rets = self._post_model([imgs, origin_shapes], training=False)
         # print("%.3f" % (time.time() - star_time))

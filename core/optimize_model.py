@@ -7,8 +7,8 @@ import os
 
 
 class Optimize:
-    def __init__(self, interpreter, n_objs, top_k_n, kp_thres, nms_iou_thres,
-                 resize_shape, *args, **kwargs):
+    def __init__(self, interpreter, weight_root, n_objs, top_k_n, kp_thres,
+                 nms_iou_thres, resize_shape, *args, **kwargs):
         self.interpreter = interpreter
         self.interpreter.allocate_tensors()
         self.n_objs = n_objs
@@ -17,23 +17,29 @@ class Optimize:
         self.nms_iou_thres = nms_iou_thres
         self.resize_shape = tf.cast(resize_shape, tf.float32)
 
-        reconv_dir = "/aidata/anders/objects/landmarks/AFLW/archive_model/add_capacity/concat/reconv"
-        sm_dir = "/aidata/anders/objects/landmarks/AFLW/archive_model/add_capacity/concat/size"
-        om_dir = "/aidata/anders/objects/landmarks/AFLW/archive_model/add_capacity/concat/offset"
+        reconv_dir = os.path.join(weight_root, "experiment")
+        sm_dir = os.path.join(weight_root, "size")
+        om_dir = os.path.join(weight_root, "offset")
 
-        #TODO: mentain the dictionary of weights
         self.reconvs_dict = self._load_weights(
             glob(os.path.join(reconv_dir, '*.npy')))
         self.sms_dict = self._load_weights(glob(os.path.join(sm_dir, '*.npy')))
         self.oms_dict = self._load_weights(glob(os.path.join(om_dir, '*.npy')))
         self.map_keys = ["hms", "x"]
-        # self.weight_keys = self.oms_dict.keys()
         self.grid = [
             [[-1, -1], [-1, 0], [-1, 1]],
             [[0, -1], [0, 0], [0, 1]],
             [[1, -1], [1, 0], [1, 1]],
         ]
         self.grid = tf.cast(np.asarray(self.grid), tf.int32)
+        self.input_details = self.interpreter.get_input_details()
+        self.output_details = self.interpreter.get_output_details()
+        self.input_is_FP = self.input_details[0]['dtype'] == np.float32
+        self.output_is_FP = False
+
+        for d in self.output_details:
+            if d['dtype'] == np.float32:
+                self.output_is_FP = True
         self.base = Base()
 
     def __call__(self, x, training=False):
@@ -41,16 +47,17 @@ class Optimize:
         batch_size = tf.shape(imgs)[0]
         self.resize_ratio = tf.cast(origin_shapes / self.resize_shape,
                                     tf.dtypes.float32)
-        input_details = self.interpreter.get_input_details()
-        output_details = self.interpreter.get_output_details()
-        # imgs = self._quantized(imgs, input_details)
-        self.interpreter.set_tensor(input_details[0]['index'], imgs)
+        if not self.input_is_FP:
+            imgs = self._quantized(imgs, self.input_details)
+
+        self.interpreter.set_tensor(self.input_details[0]['index'], imgs)
         self.interpreter.invoke()
         pred_branches = {}
         # the magix conv 1x1 should have odd number
-        for key, output_detail in zip(self.map_keys, output_details):
+        for key, output_detail in zip(self.map_keys, self.output_details):
             pred_maps = self.interpreter.get_tensor(output_detail['index'])
-            # pred_maps = self._dequantized(pred_maps, output_detail)
+            if not self.output_is_FP:
+                pred_maps = self._dequantized(pred_maps, output_detail)
             if key == 'hms':
                 pred_branches[key] = tf.cast(pred_maps[..., :2], tf.float32)
             else:
@@ -162,12 +169,9 @@ class Optimize:
 
     def _reconv(self, b_point_vectors):
 
-        # keys = self.reconvs_dict.keys()
         keys = ['conv_1x1_kernel.npy', 'conv_1x1_bias.npy']
         conv_1x1_kernel = self.reconvs_dict['conv_1x1_kernel.npy']
-
         conv_1x1_bias = self.reconvs_dict['conv_1x1_bias.npy']
-
         conv_1x1_kernel = tf.reshape(
             conv_1x1_kernel,
             [-1] + [tf.shape(conv_1x1_kernel)[i] for i in range(4)])
@@ -179,11 +183,6 @@ class Optimize:
         b_point_vectors = tf.math.reduce_sum(b_point_vectors, axis=4)
         b_point_vectors = b_point_vectors + conv_1x1_bias
         # relu activation
-
-        # check_values = tf.math.maximum(0.0, b_point_vectors)
-        # check_values = tf.squeeze(check_values, axis=0)
-        # check_values = tf.transpose(check_values, [])
-        # xxxx
         return tf.math.maximum(0.0, b_point_vectors)
 
     def _seperatable(self, batch_size, b_conv_x, b_kps, weight_dict):
@@ -212,7 +211,7 @@ class Optimize:
         b_conv_x = b_conv_x * conv_3x3_point
         b_conv_x = tf.math.reduce_sum(b_conv_x, axis=4)
         b_conv_x += conv_3x3_bias
-        return tf.math.maximum(0, b_conv_x)
+        return tf.math.maximum(0.0, b_conv_x)
 
     def _project_preds(self, b_conv_x, weight_dict):
         _, _, _, n, c = [tf.shape(b_conv_x)[i] for i in range(5)]
@@ -264,6 +263,7 @@ class Optimize:
         b_ENM = b_lnmks - b_offsets
         b_lnmks = tf.concat([b_ENM[:, :, :2], b_lnmks, b_ENM[:, :, 2:, :]],
                             axis=-2)
+        # magic rounding shift-pixels
         b_lnmks += 0.5
         b_lnmks = tf.einsum('b n c d, b d -> b n c d', b_lnmks,
                             self.resize_ratio)

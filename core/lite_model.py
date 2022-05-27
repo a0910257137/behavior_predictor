@@ -7,7 +7,6 @@ import os
 
 
 class Lite:
-
     def __init__(self, interpreter, n_objs, top_k_n, kp_thres, nms_iou_thres,
                  resize_shape, *args, **kwargs):
         self.interpreter = interpreter
@@ -172,13 +171,11 @@ class Lite:
             tf.range(batch_size, dtype=tf.int32)[:, None, None], [1, n, 1])
         b_idx = tf.concat([b_idx, b_nose_lnmks], axis=-1)
         b_offset_vect = tf.gather_nd(offset_maps, b_idx)
-
         b_offset_vect = tf.reshape(b_offset_vect, (batch_size, n, 4, 2))
         b_lnmks = tf.cast(b_nose_lnmks[:, :, None, :], tf.float32)
         b_ENM = b_lnmks - b_offset_vect
         b_lnmks = tf.concat([b_ENM[:, :, :2], b_lnmks, b_ENM[:, :, 2:, :]],
                             axis=-2)
-        b_lnmks += 0.5
         b_lnmks = tf.einsum('b n c d, b d -> b n c d', b_lnmks,
                             self.resize_ratio)
         return b_lnmks
