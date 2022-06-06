@@ -17,7 +17,7 @@ class Optimize:
         self.nms_iou_thres = nms_iou_thres
         self.resize_shape = tf.cast(resize_shape, tf.float32)
 
-        reconv_dir = os.path.join(weight_root, "experiment")
+        reconv_dir = os.path.join(weight_root, "projection")
         sm_dir = os.path.join(weight_root, "size")
         om_dir = os.path.join(weight_root, "offset")
 
@@ -53,7 +53,6 @@ class Optimize:
         self.interpreter.set_tensor(self.input_details[0]['index'], imgs)
         self.interpreter.invoke()
         pred_branches = {}
-        # the magix conv 1x1 should have odd number
         for key, output_detail in zip(self.map_keys, self.output_details):
             pred_maps = self.interpreter.get_tensor(output_detail['index'])
             if not self.output_is_FP:
@@ -70,7 +69,6 @@ class Optimize:
     def _quantized(self, map_vals, infos):
         scale, zeros_point = infos[0]['quantization']
         q_map_vals = ((1 / scale) * map_vals - zeros_point)
-
         q_map_vals = tf.cast((q_map_vals + 0.01), tf.uint8)
         return q_map_vals
 
@@ -137,13 +135,16 @@ class Optimize:
 
         n = tf.shape(b_bboxes)[1]
         d = tf.shape(b_bboxes)[-1]
-        index = tf.where(mask == True)
 
+        index = tf.where(mask == True)
         index = tf.concat([index[..., :1], index[..., -1:], index[..., 1:2]],
                           axis=-1)
+
         c_idx = tf.tile(tf.range(d)[None, :, None], [n, 1, 1])
         index = tf.cast(tf.tile(index[:, tf.newaxis, :], [1, d, 1]), tf.int32)
+
         index = tf.concat([index, c_idx], axis=-1)
+
         output = tf.tensor_scatter_nd_update(output, index,
                                              tf.reshape(b_bboxes, [n, 5]))
         scores = output[..., -1]
@@ -197,7 +198,6 @@ class Optimize:
         conv_3x3_point = weight_dict['conv_3x3_point.npy']
         conv_3x3_bias = weight_dict['conv_3x3_bias.npy']
 
-        #-------------------------conv3x3-------------------
         conv_3x3_depth = tf.tile(conv_3x3_depth[None, :, :, None, :, :],
                                  [1, 1, 1, n, 1, 1])
         b_conv_x = b_conv_x[..., None] * conv_3x3_depth
@@ -226,8 +226,9 @@ class Optimize:
 
     def _point_vectors(self, batch_size, b_idxs, x_maps, feat_maps, b_kps):
         def boundary(b_kps, b_scores):
+            b_kps = tf.squeeze(b_kps, axis=[0, 1])
+            b_scores = tf.squeeze(b_scores, axis=[0, 1])
             b_kps_y, b_kps_x = b_kps[:, 0], b_kps[:, 1]
-
             mask_y = tf.cast(b_kps_y < 191, tf.float32) * tf.cast(
                 b_kps_y > 0, tf.float32)
 
@@ -239,9 +240,15 @@ class Optimize:
             return b_kps, b_scores
 
         scores = tf.gather_nd(feat_maps, tf.concat([b_idxs, b_kps], axis=-1))
-        mask = scores > 0.5
-        b_kps, b_scores = b_kps[mask], scores[mask]
-        b_kps, b_scores = boundary(b_kps, b_scores)
+        b, c, n, d = [tf.shape(b_kps)[i] for i in range(4)]
+
+        # mask = scores > 0.5
+        b_kps, b_scores = boundary(b_kps, scores)
+        mask = b_scores > 0.5
+        b_kps, b_scores = b_kps[tf.tile(mask[:, None], [1, 2])], b_scores[mask]
+        mask = tf.reshape(mask, [b, c, tf.shape(mask)[0]])
+        b_kps = tf.reshape(b_kps, [-1, 2])
+        b_scores = tf.reshape(b_scores, [-1, 1])
         b_grid_kps = b_kps
 
         n, d = [tf.shape(b_grid_kps)[i] for i in range(2)]
