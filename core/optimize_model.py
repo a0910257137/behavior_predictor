@@ -95,6 +95,11 @@ class Optimize:
                                            tf.newaxis],
             [1, c, self.top_k_n, 1],
         )
+        # b_infos = tf.concat([b_idxs, b_coors], axis=-1)
+        # hm_scrs = tf.gather_nd(hms[..., :1], b_infos)
+        # mask = hm_scrs > 0.5
+        # mask = tf.squeeze(mask, axis=-1)
+        # coors = b_coors[mask]
         #offset vectors
         b_lnmk_point_vectors, b_grid_kps, b_lnmks, b_lnmk_scores, _ = self._point_vectors(
             batch_size, b_idxs, x, hms[..., 1], b_lnmks)
@@ -102,7 +107,6 @@ class Optimize:
         b_conv_x = self._seperatable(batch_size, b_conv_x, b_grid_kps,
                                      self.oms_dict)
         b_offsets = self._project_preds(b_conv_x, self.oms_dict)
-
         #size map vectors
         b_coors_point_vectors, b_grid_kps, b_kps, b_coor_scores, mask = self._point_vectors(
             batch_size, b_idxs, x, hms[..., 0], b_coors)
@@ -159,7 +163,6 @@ class Optimize:
             clip_boxes=False)
         box_results = tf.where(nms_reuslt[0] == -1., np.inf, nms_reuslt[0])
         box_results = tf.where((box_results - 1.) == -1., np.inf, box_results)
-
         b_bboxes = tf.concat(
             [box_results, nms_reuslt[1][..., None], nms_reuslt[2][..., None]],
             axis=-1)
@@ -169,7 +172,6 @@ class Optimize:
         return b_bboxes, b_lnmks, b_lnmk_scores
 
     def _reconv(self, b_point_vectors):
-
         keys = ['conv_1x1_kernel.npy', 'conv_1x1_bias.npy']
         conv_1x1_kernel = self.reconvs_dict['conv_1x1_kernel.npy']
         conv_1x1_bias = self.reconvs_dict['conv_1x1_bias.npy']
@@ -185,6 +187,7 @@ class Optimize:
         b_point_vectors = b_point_vectors + conv_1x1_bias
         # relu activation
         return tf.math.maximum(0.0, b_point_vectors)
+        # return b_point_vectors
 
     def _seperatable(self, batch_size, b_conv_x, b_kps, weight_dict):
         keys = [
@@ -259,11 +262,9 @@ class Optimize:
         _, n, d = [tf.shape(b_grid_kps)[i] for i in range(3)]
         b_grid_kps = b_grid_kps[:, None, None, :, :]
         self.grid = self.grid[None, :, :, None, :]
-
         # in order to fit the seperatable convolution
         b_grid_kps = b_grid_kps + self.grid
         # add a check is out side grid excluded it
-
         grid_n = 9
         b_grid_kps = tf.reshape(b_grid_kps, (1, grid_n * n, d))
         b_idx = tf.tile(

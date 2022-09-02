@@ -7,6 +7,7 @@ from .core import *
 
 
 class BehaviorPredictor:
+
     def __init__(self, config=None):
         self.config = config
         os.environ['CUDA_VISIBLE_DEVICES'] = self.config['visible_gpu']
@@ -23,7 +24,7 @@ class BehaviorPredictor:
         if self.mode == 'tflite':
             self.weight_root = self.config["weight_root"]
             interpreter = tf.lite.Interpreter(
-                model_path=os.path.join(self.model_dir, "FP32.tflite"))
+                model_path=os.path.join(self.model_dir, "INT8.tflite"))
             self._post_model = Optimize(interpreter, self.weight_root,
                                         self.n_objs, self.top_k_n,
                                         self.kp_thres, self.nms_iou_thres,
