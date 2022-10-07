@@ -7,6 +7,7 @@ import os
 
 
 class Optimize:
+
     def __init__(self, interpreter, weight_root, n_objs, top_k_n, kp_thres,
                  nms_iou_thres, resize_shape, *args, **kwargs):
         self.interpreter = interpreter
@@ -228,6 +229,7 @@ class Optimize:
         return b_conv_x
 
     def _point_vectors(self, batch_size, b_idxs, x_maps, feat_maps, b_kps):
+
         def boundary(b_kps, b_scores):
             b_kps = tf.squeeze(b_kps, axis=[0, 1])
             b_scores = tf.squeeze(b_scores, axis=[0, 1])

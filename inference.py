@@ -33,19 +33,23 @@ class BehaviorPredictor:
         if self.mode == 'centernet':
             self._post_model = CPostModel(self._model, self.n_objs,
                                           self.top_k_n, self.kp_thres,
-                                          self.nms_iou_thres,
-                                          self.resize_shape)
+                                          self.nms_iou_thres, self.resize_shape)
 
         elif self.mode == 'offset':
             self._post_model = OffsetPostModel(self._model, self.n_objs,
                                                self.top_k_n, self.kp_thres,
                                                self.nms_iou_thres,
                                                self.resize_shape)
+        elif self.mode == 'pose':
+            self._post_model = PosePostModel(self._model, self.n_objs,
+                                             self.top_k_n, self.kp_thres,
+                                             self.nms_iou_thres,
+                                             self.resize_shape)
+
         elif self.mode == '1d_G':
             self._post_model = GPostModel(self._model, self.n_objs,
                                           self.top_k_n, self.kp_thres,
-                                          self.nms_iou_thres,
-                                          self.resize_shape)
+                                          self.nms_iou_thres, self.resize_shape)
         elif self.mode == 'classification':
             self._post_model = CLSPostModel(self._model)
 
@@ -53,10 +57,9 @@ class BehaviorPredictor:
         origin_shapes = tf.cast(np.asarray(origin_shapes), tf.float32)
         imgs = list(
             map(
-                lambda x: cv2.resize(x,
-                                     tuple(self.img_input_size),
-                                     interpolation=cv2.INTER_AREA)[..., ::-1] /
-                255.0, imgs))
+                lambda x: cv2.resize(
+                    x, tuple(self.img_input_size), interpolation=cv2.INTER_AREA)
+                [..., ::-1] / 255.0, imgs))
         imgs = np.asarray(imgs)
         imgs = tf.cast(imgs, tf.float32)
         star_time = time.time()

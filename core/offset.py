@@ -5,6 +5,7 @@ import tensorflow as tf
 
 
 class OffsetPostModel(tf.keras.Model):
+
     def __init__(self, pred_model, n_objs, top_k_n, kp_thres, nms_iou_thres,
                  resize_shape, *args, **kwargs):
         super(OffsetPostModel, self).__init__(*args, **kwargs)
@@ -70,8 +71,7 @@ class OffsetPostModel(tf.keras.Model):
         b_size_vals = tf.gather_nd(size_maps, b_infos)
         b_c_idxs = tf.tile(
             tf.range(0, c, dtype=tf.int32)[tf.newaxis, :, tf.newaxis,
-                                           tf.newaxis],
-            [b, 1, self.top_k_n, 1])
+                                           tf.newaxis], [b, 1, self.top_k_n, 1])
 
         b_infos = tf.concat([b_infos, b_c_idxs], axis=-1)
         b_scores = tf.gather_nd(hms, b_infos)
