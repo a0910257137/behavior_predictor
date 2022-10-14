@@ -2,6 +2,7 @@ import tensorflow as tf
 
 
 class Base:
+
     def top_k_loc(self, hms, k, h, w, c):
         flat_hms = tf.reshape(hms, [-1, h * w, c])
         flat_hms = tf.transpose(flat_hms, [0, 2, 1])
