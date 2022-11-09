@@ -4,25 +4,27 @@ import cv2
 import os
 import time
 from .core import *
+from pprint import pprint
 
 
 class BehaviorPredictor:
 
     def __init__(self, config=None):
         self.config = config
-        os.environ['CUDA_VISIBLE_DEVICES'] = self.config['visible_gpu']
-        self.gpu_setting(self.config["gpu_fraction"])
-        self.model_dir = self.config['pb_path']
-        self.top_k_n = self.config['top_k_n']
-        self.img_input_size = self.config['img_input_size']
-        self.nms_iou_thres = self.config['nms_iou_thres']
-        self.resize_shape = np.asarray(config['resize_size'])
+        self.pred_cfg = self.config['predictor']
+        os.environ['CUDA_VISIBLE_DEVICES'] = self.pred_cfg['visible_gpu']
+        self.gpu_setting(self.pred_cfg["gpu_fraction"])
+        self.model_dir = self.pred_cfg['pb_path']
+        self.top_k_n = self.pred_cfg['top_k_n']
+        self.img_input_size = self.pred_cfg['img_input_size']
+        self.nms_iou_thres = self.pred_cfg['nms_iou_thres']
+        self.resize_shape = np.asarray(self.pred_cfg['resize_size'])
         self._model = tf.keras.models.load_model(self.model_dir)
-        self.kp_thres = self.config['kp_thres']
-        self.n_objs = self.config['n_objs']
-        self.mode = self.config['mode']
+        self.kp_thres = self.pred_cfg['kp_thres']
+        self.n_objs = self.pred_cfg['n_objs']
+        self.mode = self.pred_cfg['mode']
         if self.mode == 'tflite':
-            self.weight_root = self.config["weight_root"]
+            self.weight_root = self.pred_cfg["weight_root"]
             interpreter = tf.lite.Interpreter(
                 model_path=os.path.join(self.model_dir, "INT8.tflite"))
             self._post_model = Optimize(interpreter, self.weight_root,
@@ -40,10 +42,11 @@ class BehaviorPredictor:
                                                self.top_k_n, self.kp_thres,
                                                self.nms_iou_thres,
                                                self.resize_shape)
-        elif self.mode == 'pose':
-            self._post_model = PosePostModel(self._model, self.n_objs,
-                                             self.top_k_n, self.kp_thres,
-                                             self.nms_iou_thres,
+        elif self.mode == 'tdmm':
+
+            self._post_model = TDMMPostModel(self.config['tdmm'], self._model,
+                                             self.n_objs, self.top_k_n,
+                                             self.kp_thres, self.nms_iou_thres,
                                              self.resize_shape)
 
         elif self.mode == '1d_G':
