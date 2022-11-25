@@ -10,13 +10,13 @@ class TDMMPostModel(tf.keras.Model):
     def __init__(self, tdmm_cfg, pred_model, n_objs, top_k_n, kp_thres,
                  nms_iou_thres, resize_shape, *args, **kwargs):
         super(TDMMPostModel, self).__init__(*args, **kwargs)
-        self.n_s, self.n_Rt = tdmm_cfg['n_s'], tdmm_cfg['n_Rt']
+        self.n_s, self.n_R = tdmm_cfg['n_s'], tdmm_cfg['n_R']
         self.n_shp, self.n_exp = tdmm_cfg['n_shp'], tdmm_cfg['n_exp']
         pms = tf.cast(np.load(tdmm_cfg['pms_path']), tf.float32)
 
-        pms_s, pms_R = pms[:, :self.n_s], pms[:, self.n_s:self.n_s + self.n_Rt]
-        pms_shp, pms_exp = pms[:, self.n_s + self.n_Rt:self.n_s + self.n_Rt +
-                               self.n_shp], pms[:, 211:]
+        pms_s, pms_R = pms[:, :self.n_s], pms[:, self.n_s:self.n_s + self.n_R]
+        pms_shp, pms_exp = pms[:, self.n_s + self.n_R:self.n_s + self.n_R +
+                               self.n_shp], pms[:, 209:]
         pms = tf.concat([pms_s, pms_R, pms_shp, pms_exp], axis=-1)
         self.pms = pms[:2, :]
         head_model = load_BFM(tdmm_cfg['model_path'])
@@ -50,7 +50,7 @@ class TDMMPostModel(tf.keras.Model):
         self.resize_shape = tf.cast(resize_shape, tf.float32)
         self.base = Base()
 
-    # @tf.function
+    @tf.function
     def call(self, x, training=False):
         imgs, origin_shapes = x
         batch_size = tf.shape(imgs)[0]
@@ -82,12 +82,12 @@ class TDMMPostModel(tf.keras.Model):
         b_params = tf.reshape(b_params,
                               (batch_size, -1, tf.shape(b_params)[-1]))
         b_params = b_params * self.pms[1] + self.pms[0]
-        b_s, b_Rt = b_params[..., :self.n_s], b_params[..., self.n_s:self.n_s +
-                                                       self.n_Rt]
+        b_s, b_R = b_params[..., :self.n_s], b_params[..., self.n_s:self.n_s +
+                                                      self.n_R]
 
         b_shp = b_params[...,
-                         self.n_s + self.n_Rt:self.n_s + self.n_Rt + self.n_shp]
-        b_exp = b_params[..., self.n_s + self.n_Rt + self.n_shp:]
+                         self.n_s + self.n_R:self.n_s + self.n_R + self.n_shp]
+        b_exp = b_params[..., self.n_s + self.n_R + self.n_shp:]
 
         b_coors = tf.reshape(b_coors[b_mask],
                              (batch_size, -1, tf.shape(b_coors)[-1]))
@@ -98,30 +98,17 @@ class TDMMPostModel(tf.keras.Model):
 
         vertices = tf.reshape(vertices,
                               (batch_size, n, tf.shape(vertices)[-2] // 3, 3))
-        b_Rt = tf.concat(
-            [b_Rt, tf.ones(shape=(batch_size, tf.shape(b_Rt)[1], 1))], axis=-1)
 
-        b_Rt = tf.reshape(b_Rt, [batch_size, n, 3, 4])
-        b_R = b_Rt[..., :-1]
-        b_t = b_Rt[..., -1]
-        b_t = b_t[:, :, None, :]
+        b_R = tf.reshape(b_R, [batch_size, n, 3, 3])
+        b_s *= 1.1
         b_lnmks = b_s[..., tf.newaxis] * tf.linalg.matmul(
             vertices, b_R, transpose_b=(0, 1, 3, 2))
-        # t_vertices = tf.transpose(tf.reshape(t_vertices, (batch_size, n, -1)),
-        #                           [2, 0, 1])
-        # b_lnmks = tf.transpose(tf.gather(t_vertices, self.valid_ind), (1, 2, 0))
-        # b_lnmks = tf.reshape(b_lnmks,
-        #                      (batch_size, n, tf.shape(b_lnmks)[-1] // 3, 3))
-        # b_centroid = tf.math.reduce_mean(b_lnmks, axis=-2, keepdims=True)
-        # b_lnmks = b_lnmks + b_t
         b_coors = tf.cast(b_coors, tf.float32)
-
-        b_coors = tf.einsum('b n c, b c -> b n c', b_coors, self.resize_ratio)
+        b_coors = tf.einsum('b n c, b c -> b n c', b_coors + 0.5,
+                            self.resize_ratio)
         b_coors = b_coors[..., ::-1]
         b_lnmks = b_lnmks[..., :2] + b_coors[:, :, None, :]
         b_lnmks = b_lnmks[..., :2][..., ::-1]
-        # b_lnmks = tf.einsum('b n k c, b c -> b n k c', b_lnmks,
-        #                     self.resize_ratio)
         b_tls = tf.math.reduce_min(b_lnmks, axis=2)
         b_brs = tf.math.reduce_max(b_lnmks, axis=2)
         b_scores = tf.reshape(b_scores[b_mask],
@@ -130,8 +117,6 @@ class TDMMPostModel(tf.keras.Model):
         b_bboxes = tf.concat([b_tls, b_brs, b_scores], axis=-1)
         b_bboxes = tf.reshape(b_bboxes, [-1, 5])
         index = tf.where(b_mask == True)
-        # [0, 0, 13]
-
         d = tf.shape(b_bboxes)[-1]
         c_idx = tf.tile(tf.range(d)[None, :, None], [n, 1, 1])
         index = tf.cast(tf.tile(index[:, tf.newaxis, :], [1, d, 1]), tf.int32)
