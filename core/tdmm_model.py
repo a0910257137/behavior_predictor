@@ -100,7 +100,6 @@ class TDMMPostModel(tf.keras.Model):
                               (batch_size, n, tf.shape(vertices)[-2] // 3, 3))
 
         b_R = tf.reshape(b_R, [batch_size, n, 3, 3])
-        b_s *= 1.1
         b_lnmks = b_s[..., tf.newaxis] * tf.linalg.matmul(
             vertices, b_R, transpose_b=(0, 1, 3, 2))
         b_coors = tf.cast(b_coors, tf.float32)
