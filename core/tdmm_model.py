@@ -36,7 +36,6 @@ class TDMMPostModel(tf.keras.Model):
         mean = tf.math.reduce_mean(self.u_base, axis=0, keepdims=True)
         self.u_base -= mean
         self.u_base = tf.reshape(self.u_base, (tf.shape(self.u_base)[0] * 3, 1))
-
         self.shp_base = tf.cast(head_model['shapePC'], tf.float32)[:, :50]
         self.shp_base = tf.gather(self.shp_base, self.valid_ind)
         self.exp_base = tf.cast(head_model['expPC'], tf.float32)
@@ -50,7 +49,7 @@ class TDMMPostModel(tf.keras.Model):
         self.resize_shape = tf.cast(resize_shape, tf.float32)
         self.base = Base()
 
-    @tf.function
+    # @tf.function
     def call(self, x, training=False):
         imgs, origin_shapes = x
         batch_size = tf.shape(imgs)[0]
@@ -76,8 +75,13 @@ class TDMMPostModel(tf.keras.Model):
 
         b_infos = tf.concat([b_idxs, b_coors], axis=-1)
         b_params = tf.gather_nd(pms, b_infos)
+
+        b_c_idxs = tf.tile(
+            tf.range(0, c, dtype=tf.int32)[tf.newaxis, :, tf.newaxis,
+                                           tf.newaxis], [b, 1, self.top_k_n, 1])
+        b_infos = tf.concat([b_infos, b_c_idxs], axis=-1)
         b_scores = tf.gather_nd(hms, b_infos)
-        b_mask = tf.squeeze(b_scores > 0.5, axis=-1)
+        b_mask = b_scores > self.kp_thres
         b_params = b_params[b_mask]
         b_params = tf.reshape(b_params,
                               (batch_size, -1, tf.shape(b_params)[-1]))
@@ -110,8 +114,7 @@ class TDMMPostModel(tf.keras.Model):
         b_lnmks = b_lnmks[..., :2][..., ::-1]
         b_tls = tf.math.reduce_min(b_lnmks, axis=2)
         b_brs = tf.math.reduce_max(b_lnmks, axis=2)
-        b_scores = tf.reshape(b_scores[b_mask],
-                              (batch_size, -1, tf.shape(b_scores)[-1]))
+        b_scores = tf.reshape(b_scores[b_mask], (batch_size, -1, 1))
 
         b_bboxes = tf.concat([b_tls, b_brs, b_scores], axis=-1)
         b_bboxes = tf.reshape(b_bboxes, [-1, 5])

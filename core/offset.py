@@ -15,6 +15,12 @@ class OffsetPostModel(tf.keras.Model):
         self.kp_thres = kp_thres
         self.nms_iou_thres = nms_iou_thres
         self.resize_shape = tf.cast(resize_shape, tf.float32)
+        self.keys = [
+            'offset_map_LE',
+            'offset_map_RE',
+            'offset_map_LE',
+            'offset_map_RM',
+        ]
         self.base = Base()
 
     @tf.function
@@ -24,7 +30,8 @@ class OffsetPostModel(tf.keras.Model):
         self.resize_ratio = tf.cast(origin_shapes / self.resize_shape,
                                     tf.dtypes.float32)
         preds = self.pred_model(imgs, training=False)
-
+        preds['obj_offset_map'] = tf.concat([preds[k] for k in self.keys],
+                                            axis=-1)
         b_bboxes, b_lnmks, b_nose_scores = self._obj_detect(
             batch_size, preds["obj_heat_map"], preds['obj_offset_map'],
             preds['obj_size_maps'])
