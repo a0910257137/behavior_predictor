@@ -5,6 +5,7 @@ import tensorflow as tf
 
 
 class CPostModel(tf.keras.Model):
+
     def __init__(self, pred_model, n_objs, top_k_n, kp_thres, nms_iou_thres,
                  resize_shape, *args, **kwargs):
         super(CPostModel, self).__init__(*args, **kwargs)
@@ -46,8 +47,7 @@ class CPostModel(tf.keras.Model):
 
         b_c_idxs = tf.tile(
             tf.range(0, c, dtype=tf.int32)[tf.newaxis, :, tf.newaxis,
-                                           tf.newaxis],
-            [b, 1, self.top_k_n, 1])
+                                           tf.newaxis], [b, 1, self.top_k_n, 1])
 
         b_infos = tf.concat([b_infos, b_c_idxs], axis=-1)
         b_scores = tf.gather_nd(hms, b_infos)
@@ -82,6 +82,7 @@ class CPostModel(tf.keras.Model):
         index = tf.cast(tf.tile(index[:, tf.newaxis, :], [1, d, 1]), tf.int32)
         index = tf.concat([index, c_idx], axis=-1)
         output = tf.tensor_scatter_nd_update(output, index, b_bboxes[mask])
+
         scores = output[..., -1]
         output = output[..., :-1]
         # [B, N, Cate, 4]

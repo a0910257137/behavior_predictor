@@ -43,18 +43,15 @@ class BehaviorPredictor:
                                                self.nms_iou_thres,
                                                self.resize_shape)
         elif self.mode == 'tdmm':
-
             self._post_model = TDMMPostModel(self.config['tdmm'], self._model,
                                              self.n_objs, self.top_k_n,
                                              self.kp_thres, self.nms_iou_thres,
                                              self.resize_shape)
-
-        elif self.mode == '1d_G':
-            self._post_model = GPostModel(self._model, self.n_objs,
-                                          self.top_k_n, self.kp_thres,
-                                          self.nms_iou_thres, self.resize_shape)
-        elif self.mode == 'classification':
-            self._post_model = CLSPostModel(self._model)
+        elif self.mode == 'scrfd':
+            self._post_model = SCRFDPostModel(self._model, self.n_objs,
+                                              self.top_k_n, self.kp_thres,
+                                              self.nms_iou_thres,
+                                              self.resize_shape)
 
     def pred(self, imgs, origin_shapes):
         origin_shapes = tf.cast(np.asarray(origin_shapes), tf.float32)
