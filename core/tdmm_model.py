@@ -10,14 +10,12 @@ class TDMMPostModel(tf.keras.Model):
     def __init__(self, tdmm_cfg, pred_model, n_objs, top_k_n, kp_thres,
                  nms_iou_thres, resize_shape, *args, **kwargs):
         super(TDMMPostModel, self).__init__(*args, **kwargs)
-        self.n_s, self.n_R = tdmm_cfg['n_s'], tdmm_cfg['n_R']
+        self.n_R = tdmm_cfg['n_R']
         self.n_shp, self.n_exp = tdmm_cfg['n_shp'], tdmm_cfg['n_exp']
         pms = tf.cast(np.load(tdmm_cfg['pms_path']), tf.float32)
-
-        pms_s, pms_R = pms[:, :self.n_s], pms[:, self.n_s:self.n_s + self.n_R]
-        pms_shp, pms_exp = pms[:, self.n_s + self.n_R:self.n_s + self.n_R +
-                               self.n_shp], pms[:, 209:]
-        pms = tf.concat([pms_s, pms_R, pms_shp, pms_exp], axis=-1)
+        pms_R = pms[:, :self.n_R]
+        pms_shp, pms_exp = pms[:, self.n_R:self.n_R + self.n_shp], pms[:, 208:]
+        pms = tf.concat([pms_R, pms_shp, pms_exp], axis=-1)
         self.pms = pms[:2, :]
         head_model = load_BFM(tdmm_cfg['model_path'])
         kpt_ind = head_model['kpt_ind']
@@ -36,7 +34,8 @@ class TDMMPostModel(tf.keras.Model):
         mean = tf.math.reduce_mean(self.u_base, axis=0, keepdims=True)
         self.u_base -= mean
         self.u_base = tf.reshape(self.u_base, (tf.shape(self.u_base)[0] * 3, 1))
-        self.shp_base = tf.cast(head_model['shapePC'], tf.float32)[:, :50]
+        self.shp_base = tf.cast(head_model['shapePC'],
+                                tf.float32)[:, :self.n_shp]
         self.shp_base = tf.gather(self.shp_base, self.valid_ind)
         self.exp_base = tf.cast(head_model['expPC'], tf.float32)
         self.exp_base = tf.gather(self.exp_base, self.valid_ind)
@@ -49,7 +48,7 @@ class TDMMPostModel(tf.keras.Model):
         self.resize_shape = tf.cast(resize_shape, tf.float32)
         self.base = Base()
 
-    # @tf.function
+    @tf.function
     def call(self, x, training=False):
         imgs, origin_shapes = x
         batch_size = tf.shape(imgs)[0]
@@ -57,25 +56,24 @@ class TDMMPostModel(tf.keras.Model):
                                     tf.dtypes.float32)
         preds = self.pred_model(imgs, training=False)
         box_results, output_lnmks, output_pose = self._reconstruct_tdmm(
-            batch_size, preds["obj_heat_map"], preds['obj_param_map'])
+            batch_size, preds["obj_heat_map"], preds["obj_size_map"],
+            preds['obj_param_map'])
         return box_results, output_lnmks, output_pose
 
     # @tf.function
-    def _reconstruct_tdmm(self, batch_size, hms, pms):
+    def _reconstruct_tdmm(self, batch_size, hms, sms, pms):
         hms = self.base.apply_max_pool(hms)
         b, h, w, c = [tf.shape(hms)[i] for i in range(4)]
         output_bboxes = -tf.ones(shape=(batch_size, c, self.n_objs, 5))
         b_coors = self.base.top_k_loc(hms, self.top_k_n, h, w, c)
-
         b_idxs = tf.tile(
             tf.range(0, b, dtype=tf.int32)[:, tf.newaxis, tf.newaxis,
                                            tf.newaxis],
             [1, c, self.top_k_n, 1],
         )
-
         b_infos = tf.concat([b_idxs, b_coors], axis=-1)
         b_params = tf.gather_nd(pms, b_infos)
-
+        b_size_vals = tf.gather_nd(sms, b_infos)
         b_c_idxs = tf.tile(
             tf.range(0, c, dtype=tf.int32)[tf.newaxis, :, tf.newaxis,
                                            tf.newaxis], [b, 1, self.top_k_n, 1])
@@ -83,16 +81,14 @@ class TDMMPostModel(tf.keras.Model):
         b_scores = tf.gather_nd(hms, b_infos)
         b_mask = b_scores > self.kp_thres
         b_params = b_params[b_mask]
+        b_size_vals = b_size_vals[b_mask]
+        b_size_vals = tf.reshape(b_size_vals, (batch_size, -1, 2))
         b_params = tf.reshape(b_params,
                               (batch_size, -1, tf.shape(b_params)[-1]))
         b_params = b_params * self.pms[1] + self.pms[0]
-        b_s, b_R = b_params[..., :self.n_s], b_params[..., self.n_s:self.n_s +
-                                                      self.n_R]
-
-        b_shp = b_params[...,
-                         self.n_s + self.n_R:self.n_s + self.n_R + self.n_shp]
-        b_exp = b_params[..., self.n_s + self.n_R + self.n_shp:]
-
+        b_R = b_params[..., :self.n_R]
+        b_shp = b_params[..., self.n_R:self.n_R + self.n_shp]
+        b_exp = b_params[..., self.n_R + self.n_shp:]
         b_coors = tf.reshape(b_coors[b_mask],
                              (batch_size, -1, tf.shape(b_coors)[-1]))
         n = tf.shape(b_coors)[-2]
@@ -102,16 +98,20 @@ class TDMMPostModel(tf.keras.Model):
 
         vertices = tf.reshape(vertices,
                               (batch_size, n, tf.shape(vertices)[-2] // 3, 3))
-
         b_R = tf.reshape(b_R, [batch_size, n, 3, 3])
-        b_lnmks = b_s[..., tf.newaxis] * tf.linalg.matmul(
-            vertices, b_R, transpose_b=(0, 1, 3, 2))
+        b_lnmks = tf.linalg.matmul(vertices, b_R, transpose_b=(0, 1, 3, 2))
         b_coors = tf.cast(b_coors, tf.float32)
         b_coors = tf.einsum('b n c, b c -> b n c', b_coors + 0.5,
                             self.resize_ratio)
-        b_coors = b_coors[..., ::-1]
-        b_lnmks = b_lnmks[..., :2] + b_coors[:, :, None, :]
+        b_size_vals = tf.einsum('b n c, b c -> b n c', b_size_vals,
+                                self.resize_ratio)
         b_lnmks = b_lnmks[..., :2][..., ::-1]
+        b_tls = tf.math.reduce_min(b_lnmks, axis=2)
+        b_brs = tf.math.reduce_max(b_lnmks, axis=2)
+        b_hw = (b_brs - b_tls)
+        b_scales = b_size_vals / b_hw
+        b_lnmks = tf.einsum('b n c d, b n d -> b n c d', b_lnmks, b_scales)
+        b_lnmks += b_coors[:, :, None, :]
         b_tls = tf.math.reduce_min(b_lnmks, axis=2)
         b_brs = tf.math.reduce_max(b_lnmks, axis=2)
         b_scores = tf.reshape(b_scores[b_mask], (batch_size, -1, 1))
@@ -142,6 +142,7 @@ class TDMMPostModel(tf.keras.Model):
             [box_results, nms_reuslt[1][..., None], nms_reuslt[2][..., None]],
             axis=-1)
         b_bboxes = tf.reshape(b_bboxes, [-1, self.n_objs, 6])
+
         output_lnmks, output_pose = self._valid_lnmks(batch_size, b_bboxes,
                                                       b_scores, b_lnmks, b_R)
         return b_bboxes, output_lnmks, output_pose

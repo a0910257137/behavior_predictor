@@ -10,21 +10,15 @@ class SCRFDPostModel(tf.keras.Model):
     def __init__(self, pred_model, n_objs, top_k_n, kp_thres, nms_iou_thres,
                  resize_shape, *args, **kwargs):
         super(SCRFDPostModel, self).__init__(*args, **kwargs)
-
         self.pred_model = pred_model
         self.n_objs = n_objs
         self.top_k_n = top_k_n
         self.kp_thres = kp_thres
         self.nms_iou_thres = nms_iou_thres
         self.resize_shape = tf.cast(resize_shape, tf.float32)
-
-        self.feat_size = tf.constant([(80, 80), (40, 40), (20, 20)])
-        self.reg_max = 8
         self.cls_out_channels = 1
-        self.fmc = 3
         self._feat_stride_fpn = [8, 16, 32]
         self._num_anchors = 2
-        self.use_kps = True
 
     # @tf.function
     def call(self, x, training=False):
@@ -33,9 +27,8 @@ class SCRFDPostModel(tf.keras.Model):
         self.resize_ratio = tf.cast(origin_shapes / self.resize_shape,
                                     tf.dtypes.float32)
         preds = self.pred_model(imgs, training=False)
-        box_results, kp_results = self._anchor_assign(batch_size,
-                                                      preds["multi_lv_feats"])
-        return box_results, kp_results
+        box_results = self._anchor_assign(batch_size, preds["multi_lv_feats"])
+        return box_results
 
     # @tf.function
     def _anchor_assign(self, batch_size, multi_lv_feats):
@@ -48,7 +41,7 @@ class SCRFDPostModel(tf.keras.Model):
             b_bbox_preds = tf.reshape(b_bbox_preds, [-1, 4])
             b_cls_preds = tf.reshape(b_cls_preds, [-1, self.cls_out_channels])
             b_cls_preds = tf.math.sigmoid(b_cls_preds)
-            mask = tf.squeeze(b_cls_preds > 0.05, axis=-1)
+            mask = tf.squeeze(b_cls_preds > 0.04, axis=-1)
             pos_ind = tf.where(mask == True)
             b_cls_preds = b_cls_preds[mask]
             b_bbox_preds = b_bbox_preds * stride
@@ -68,18 +61,12 @@ class SCRFDPostModel(tf.keras.Model):
             mask = tf.tile(mask[None, :], [batch_size, 1])
             b_bboxes = b_bboxes[mask]
             boxes_list.append(b_bboxes)
-            kpss = self.distance2kps(anchor_centers, b_kp_preds)
-            kpss = tf.reshape(kpss, (batch_size, tf.shape(kpss)[0], -1, 2))
-            pos_kpss = kpss[mask]
-            kp_list.append(pos_kpss)
-        b_bboxes = tf.reshape(tf.concat(b_bboxes, axis=0),
+
+        b_bboxes = tf.reshape(tf.concat(boxes_list, axis=0),
                               [batch_size, -1, 2, 2])
         b_bboxes = tf.einsum('b n c d, b d -> b n c d', b_bboxes,
                              self.resize_ratio[:, ::-1])
-        kp_list = tf.reshape(tf.concat(kp_list, axis=0), [batch_size, -1, 5, 2])
-        kp_list = tf.einsum('b n c d, b d -> b n c d', kp_list,
-                            self.resize_ratio[:, ::-1])
-        return b_bboxes, kp_list
+        return b_bboxes
 
     def distance2bbox(self, points, distance, max_shape=None):
         """Decode distance prediction to bounding box.
