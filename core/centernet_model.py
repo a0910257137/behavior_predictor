@@ -82,7 +82,6 @@ class CPostModel(tf.keras.Model):
         index = tf.cast(tf.tile(index[:, tf.newaxis, :], [1, d, 1]), tf.int32)
         index = tf.concat([index, c_idx], axis=-1)
         output = tf.tensor_scatter_nd_update(output, index, b_bboxes[mask])
-
         scores = output[..., -1]
         output = output[..., :-1]
         # [B, N, Cate, 4]

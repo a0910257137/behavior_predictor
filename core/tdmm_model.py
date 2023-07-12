@@ -33,7 +33,8 @@ class TDMMPostModel(tf.keras.Model):
                                  (tf.shape(self.u_base)[0] // 3, 3))
         mean = tf.math.reduce_mean(self.u_base, axis=0, keepdims=True)
         self.u_base -= mean
-        self.u_base = tf.reshape(self.u_base, (tf.shape(self.u_base)[0] * 3, 1))
+        self.u_base = tf.reshape(self.u_base,
+                                 (tf.shape(self.u_base)[0] * 3, 1))
         self.shp_base = tf.cast(head_model['shapePC'],
                                 tf.float32)[:, :self.n_shp]
         self.shp_base = tf.gather(self.shp_base, self.valid_ind)
@@ -48,7 +49,7 @@ class TDMMPostModel(tf.keras.Model):
         self.resize_shape = tf.cast(resize_shape, tf.float32)
         self.base = Base()
 
-    @tf.function
+    # @tf.function
     def call(self, x, training=False):
         imgs, origin_shapes = x
         batch_size = tf.shape(imgs)[0]
@@ -76,7 +77,8 @@ class TDMMPostModel(tf.keras.Model):
         b_size_vals = tf.gather_nd(sms, b_infos)
         b_c_idxs = tf.tile(
             tf.range(0, c, dtype=tf.int32)[tf.newaxis, :, tf.newaxis,
-                                           tf.newaxis], [b, 1, self.top_k_n, 1])
+                                           tf.newaxis],
+            [b, 1, self.top_k_n, 1])
         b_infos = tf.concat([b_infos, b_c_idxs], axis=-1)
         b_scores = tf.gather_nd(hms, b_infos)
         b_mask = b_scores > self.kp_thres
@@ -142,7 +144,6 @@ class TDMMPostModel(tf.keras.Model):
             [box_results, nms_reuslt[1][..., None], nms_reuslt[2][..., None]],
             axis=-1)
         b_bboxes = tf.reshape(b_bboxes, [-1, self.n_objs, 6])
-
         output_lnmks, output_pose = self._valid_lnmks(batch_size, b_bboxes,
                                                       b_scores, b_lnmks, b_R)
         return b_bboxes, output_lnmks, output_pose
@@ -174,8 +175,10 @@ class TDMMPostModel(tf.keras.Model):
         index = tf.cast(tf.tile(b_idxs[:, tf.newaxis, :], [1, k * c, 1]),
                         tf.int32)
         index = tf.concat([index, c_idx], axis=-1)
-        output_lnmks = tf.tensor_scatter_nd_update(output_lnmks, index, b_lnmks)
-        output_lnmks = tf.reshape(output_lnmks, (batch_size, self.n_objs, k, c))
+        output_lnmks = tf.tensor_scatter_nd_update(output_lnmks, index,
+                                                   b_lnmks)
+        output_lnmks = tf.reshape(output_lnmks,
+                                  (batch_size, self.n_objs, k, c))
         b_R = tf.gather_nd(b_R, b_idxs)
         b_yaw = tf.math.asin(-b_R[..., 2, 0]) * (180 / np.pi)
         b_pitch = tf.math.atan2(

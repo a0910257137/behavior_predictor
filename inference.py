@@ -23,6 +23,9 @@ class BehaviorPredictor:
         self.kp_thres = self.pred_cfg['kp_thres']
         self.n_objs = self.pred_cfg['n_objs']
         self.mode = self.pred_cfg['mode']
+        self.mean = np.array([127.5, 127.5, 127.5])[np.newaxis, np.newaxis]
+        self.std = np.array([128., 128., 128.])[np.newaxis, np.newaxis]
+
         if self.mode == 'tflite':
             self.weight_root = self.pred_cfg["weight_root"]
             interpreter = tf.lite.Interpreter(
@@ -55,11 +58,18 @@ class BehaviorPredictor:
 
     def pred(self, imgs, origin_shapes):
         origin_shapes = tf.cast(np.asarray(origin_shapes), tf.float32)
+
         imgs = list(
             map(
-                lambda x: cv2.resize(
+                lambda x: (cv2.resize(
                     x, tuple(self.img_input_size), interpolation=cv2.INTER_AREA)
-                [..., ::-1] / 255.0, imgs))
+                           [..., ::-1] - self.mean) / self.std, imgs))
+        # imgs = list(
+        #     map(
+        #         lambda x: cv2.resize(
+        #             x, tuple(self.img_input_size), interpolation=cv2.INTER_AREA)
+        #         [..., ::-1] / 255., imgs))
+
         imgs = np.asarray(imgs)
         imgs = tf.cast(imgs, tf.float32)
         star_time = time.time()
