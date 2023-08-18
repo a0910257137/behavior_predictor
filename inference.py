@@ -55,20 +55,25 @@ class BehaviorPredictor:
                                               self.top_k_n, self.kp_thres,
                                               self.nms_iou_thres,
                                               self.resize_shape)
+        elif self.mode == 'scrfd_tdmm':
+            self._post_model = SCRFDTDMMPostModel(self.config['tdmm'],
+                                                  self._model, self.n_objs,
+                                                  self.top_k_n, self.kp_thres,
+                                                  self.nms_iou_thres,
+                                                  self.resize_shape)
 
     def pred(self, imgs, origin_shapes):
         origin_shapes = tf.cast(np.asarray(origin_shapes), tf.float32)
-
-        imgs = list(
-            map(
-                lambda x: (cv2.resize(
-                    x, tuple(self.img_input_size), interpolation=cv2.INTER_AREA)
-                           [..., ::-1] - self.mean) / self.std, imgs))
         # imgs = list(
         #     map(
-        #         lambda x: cv2.resize(
+        #         lambda x: (cv2.resize(
         #             x, tuple(self.img_input_size), interpolation=cv2.INTER_AREA)
-        #         [..., ::-1] / 255., imgs))
+        #                    [..., ::-1] - self.mean) / self.std, imgs))
+        imgs = list(
+            map(
+                lambda x: cv2.resize(
+                    x, tuple(self.img_input_size), interpolation=cv2.INTER_AREA)
+                [..., ::-1] / 255., imgs))
 
         imgs = np.asarray(imgs)
         imgs = tf.cast(imgs, tf.float32)
