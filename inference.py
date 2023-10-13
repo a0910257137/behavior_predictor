@@ -25,9 +25,8 @@ class BehaviorPredictor:
         self.mode = self.pred_cfg['mode']
         self.mean = np.array([127.5, 127.5, 127.5])[np.newaxis, np.newaxis]
         self.std = np.array([128., 128., 128.])[np.newaxis, np.newaxis]
-
+        self.weight_root = self.pred_cfg["weight_root"]
         if self.mode == 'tflite':
-            self.weight_root = self.pred_cfg["weight_root"]
             interpreter = tf.lite.Interpreter(
                 model_path=os.path.join(self.model_dir, "FP32.tflite"))
             self._post_model = Optimize(interpreter, self.weight_root,
@@ -55,12 +54,24 @@ class BehaviorPredictor:
                                               self.top_k_n, self.kp_thres,
                                               self.nms_iou_thres,
                                               self.resize_shape)
+
         elif self.mode == 'scrfd_tdmm':
             self._post_model = SCRFDTDMMPostModel(self.config['tdmm'],
                                                   self._model, self.n_objs,
                                                   self.top_k_n, self.kp_thres,
                                                   self.nms_iou_thres,
                                                   self.resize_shape)
+        elif self.mode == 'scrfd_tdmm_opt':
+            self._post_model = SCRFDTDMMOptPostModel(
+                self.config['tdmm'],
+                self.weight_root,
+                self._model,
+                self.n_objs,
+                self.top_k_n,
+                self.kp_thres,
+                self.nms_iou_thres,
+                self.resize_shape,
+            )
 
     def pred(self, imgs, origin_shapes):
         origin_shapes = tf.cast(np.asarray(origin_shapes), tf.float32)
@@ -79,7 +90,7 @@ class BehaviorPredictor:
         imgs = tf.cast(imgs, tf.float32)
         star_time = time.time()
         rets = self._post_model([imgs, origin_shapes], training=False)
-        # print("%.3f" % (time.time() - star_time))
+        print("%.3f" % (time.time() - star_time))
         return rets
 
     def gpu_setting(self, fraction):
