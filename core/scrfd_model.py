@@ -16,7 +16,7 @@ class SCRFDPostModel(tf.keras.Model):
         self.kp_thres = kp_thres
         self.nms_iou_thres = nms_iou_thres
         self.resize_shape = tf.cast(resize_shape, tf.float32)
-        self.cls_out_channels = 2
+        self.cls_out_channels = 1
         self._feat_stride_fpn = [8, 16, 32]
         self.num_levels = len(self._feat_stride_fpn)
         self.num_level_anchors = [3200, 800, 200]
@@ -40,8 +40,8 @@ class SCRFDPostModel(tf.keras.Model):
         for i, (lv_feats,
                 stride) in enumerate(zip(multi_lv_feats,
                                          self._feat_stride_fpn)):
-
             b_cls_preds, b_bbox_preds = lv_feats
+
             b_cls_preds = tf.math.sigmoid(b_cls_preds)
             b_bbox_preds = tf.reshape(b_bbox_preds, [-1, 4])
             b_mask = b_cls_preds > self.kp_thres
@@ -51,13 +51,14 @@ class SCRFDPostModel(tf.keras.Model):
             mask = b_cls_preds > self.kp_thres
             idxs = tf.where(mask == True)
             channel_idxs = tf.cast(idxs, tf.int32)[:, -1:]
-            b_cls_preds = tf.expand_dims(b_cls_preds[mask], axis=-1)
+            b_cls_preds = b_cls_preds[tf.math.reduce_any(mask, axis=-1)]
             b_bbox_preds = b_bbox_preds * stride
             height = self.resize_shape[0] // stride
             width = self.resize_shape[1] // stride
             X, Y = tf.meshgrid(tf.range(0, width), tf.range(0, height))
             anchor_centers = tf.stack([X, Y], axis=-1)
             anchor_centers = tf.reshape((anchor_centers * stride), (-1, 2))
+
             if self._num_anchors > 1:
                 anchor_centers = tf.reshape(
                     tf.stack([anchor_centers] * self._num_anchors, axis=1),
@@ -67,9 +68,9 @@ class SCRFDPostModel(tf.keras.Model):
             anchor_centers = tf.tile(anchor_centers[None, ...],
                                      (batch_size, 1, 1))
             anchor_centers = tf.reshape(anchor_centers, (-1, 2))
+
             b_bboxes = self.distance2bbox(anchor_centers, b_bbox_preds)
-            b_bboxes = tf.gather_nd(b_bboxes, idxs[:, :1])
-            # b_bboxes = b_bboxes[tf.math.reduce_any(mask, axis=0)]
+            b_bboxes = b_bboxes[tf.math.reduce_any(mask, axis=-1)]
             num_detected_objs = tf.math.reduce_sum(tf.cast(mask, tf.float32))
             obj_idxs = tf.range(num_detected_objs, dtype=tf.int32)[:, None]
             obj_idxs += obj_start_idx
@@ -78,11 +79,9 @@ class SCRFDPostModel(tf.keras.Model):
             b_bboxes = tf.einsum('n c d, b d -> n c d', b_bboxes[..., ::-1],
                                  self.resize_ratio)
             b_bboxes = tf.reshape(b_bboxes, (-1, 4))
-
             b_bboxes = tf.concat([b_bboxes, b_cls_preds], axis=-1)
             idxs = tf.concat([btach_idxs, obj_idxs, channel_idxs], axis=-1)
             b_outputs = tf.tensor_scatter_nd_update(b_outputs, idxs, b_bboxes)
-            
 
         b_scores = b_outputs[..., -1]
         b_outputs = b_outputs[..., :-1]
