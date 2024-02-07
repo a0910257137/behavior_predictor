@@ -19,14 +19,19 @@ class BehaviorPredictor:
         self.img_input_size = self.pred_cfg['img_input_size']
         self.nms_iou_thres = self.pred_cfg['nms_iou_thres']
         self.resize_shape = np.asarray(self.pred_cfg['resize_size'])
-        self._model = tf.keras.models.load_model(self.model_dir)
+        self.model_format = self.pred_cfg['model_format']
+        if self.model_format == 'tflite':
+            self._model = tf.lite.Interpreter(model_path=os.path.join(
+                self.model_dir, "mtfd_preporcess_int8.tflite"))
+        else:
+            self._model = tf.keras.models.load_model(self.model_dir)
         self.kp_thres = self.pred_cfg['kp_thres']
         self.n_objs = self.pred_cfg['n_objs']
-        self.mode = self.pred_cfg['mode']
+        self.predictor_mode = self.pred_cfg['predictor_mode']
         self.mean = np.array([127.5, 127.5, 127.5])[np.newaxis, np.newaxis]
         self.std = np.array([128., 128., 128.])[np.newaxis, np.newaxis]
         self.weight_root = self.pred_cfg["weight_root"]
-        if self.mode == 'tflite':
+        if self.predictor_mode == 'tflite':
             interpreter = tf.lite.Interpreter(
                 model_path=os.path.join(self.model_dir, "FP32.tflite"))
             self._post_model = Optimize(interpreter, self.weight_root,
@@ -34,44 +39,60 @@ class BehaviorPredictor:
                                         self.kp_thres, self.nms_iou_thres,
                                         self.resize_shape)
 
-        if self.mode == 'centernet':
+        if self.predictor_mode == 'centernet':
             self._post_model = CPostModel(self._model, self.n_objs,
                                           self.top_k_n, self.kp_thres,
-                                          self.nms_iou_thres, self.resize_shape)
+                                          self.nms_iou_thres,
+                                          self.resize_shape)
 
-        elif self.mode == 'offset':
+        elif self.predictor_mode == 'offset':
             self._post_model = OffsetPostModel(self._model, self.n_objs,
                                                self.top_k_n, self.kp_thres,
                                                self.nms_iou_thres,
                                                self.resize_shape)
-        elif self.mode == 'tdmm':
+        elif self.predictor_mode == 'tdmm':
             self._post_model = TDMMPostModel(self.config['tdmm'], self._model,
                                              self.n_objs, self.top_k_n,
                                              self.kp_thres, self.nms_iou_thres,
                                              self.resize_shape)
-        elif self.mode == 'scrfd':
+        elif self.predictor_mode == 'scrfd':
             self._post_model = SCRFDPostModel(self._model, self.n_objs,
                                               self.top_k_n, self.kp_thres,
                                               self.nms_iou_thres,
                                               self.resize_shape)
 
-        elif self.mode == 'scrfd_tdmm':
-            self._post_model = SCRFDTDMMPostModel(self.config['tdmm'],
-                                                  self._model, self.n_objs,
-                                                  self.top_k_n, self.kp_thres,
-                                                  self.nms_iou_thres,
-                                                  self.resize_shape)
-        elif self.mode == 'scrfd_tdmm_opt':
-            self._post_model = SCRFDTDMMOptPostModel(
-                self.config['tdmm'],
-                self.weight_root,
-                self._model,
-                self.n_objs,
-                self.top_k_n,
-                self.kp_thres,
-                self.nms_iou_thres,
-                self.resize_shape,
-            )
+        elif self.predictor_mode == 'scrfd_tdmm':
+            if self.model_format == 'tflite':
+                self._post_model = SCRFDTDMMTFLitePostModel(
+                    self.config['tdmm'], self._model, self.n_objs,
+                    self.top_k_n, self.kp_thres, self.nms_iou_thres,
+                    self.resize_shape)
+            else:
+                self._post_model = SCRFDTDMMPostModel(self.config['tdmm'],
+                                                      self._model, self.n_objs,
+                                                      self.top_k_n,
+                                                      self.kp_thres,
+                                                      self.nms_iou_thres,
+                                                      self.resize_shape)
+
+        elif self.predictor_mode == 'scrfd_tdmm_opt':
+
+            if self.model_format == 'tflite':
+                self._post_model = SCRFDTFLiteOptModel(
+                    self.config['tdmm'], self.weight_root, self._model,
+                    self.n_objs, self.top_k_n, self.kp_thres,
+                    self.nms_iou_thres, self.resize_shape)
+            else:
+                self._post_model = SCRFDTDMMOptPostModel(
+                    self.config['tdmm'],
+                    self.weight_root,
+                    self._model,
+                    self.n_objs,
+                    self.top_k_n,
+                    self.kp_thres,
+                    self.nms_iou_thres,
+                    self.resize_shape,
+                )
 
     def pred(self, imgs, origin_shapes):
         origin_shapes = tf.cast(np.asarray(origin_shapes), tf.float32)
@@ -82,15 +103,15 @@ class BehaviorPredictor:
         #                    [..., ::-1] - self.mean) / self.std, imgs))
         imgs = list(
             map(
-                lambda x: cv2.resize(
-                    x, tuple(self.img_input_size), interpolation=cv2.INTER_AREA)
-                [..., ::-1] / 255., imgs))
-
+                lambda x: cv2.resize(x,
+                                     tuple(self.img_input_size),
+                                     interpolation=cv2.INTER_AREA)[..., ::-1] /
+                255., imgs))
         imgs = np.asarray(imgs)
         imgs = tf.cast(imgs, tf.float32)
         star_time = time.time()
         rets = self._post_model([imgs, origin_shapes], training=False)
-        print("%.3f" % (time.time() - star_time))
+        # print("%.3f" % (time.time() - star_time))
         return rets
 
     def gpu_setting(self, fraction):

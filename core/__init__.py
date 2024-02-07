@@ -5,3 +5,5 @@ from .optimize_model import Optimize
 from .scrfd_model import SCRFDPostModel
 from .scrfd_tdmm import SCRFDTDMMPostModel
 from .scrfd_tdmm_opt import SCRFDTDMMOptPostModel
+from .scrfd_tflite_opt import SCRFDTFLiteOptModel
+from .scrfd_tflite import SCRFDTDMMTFLitePostModel

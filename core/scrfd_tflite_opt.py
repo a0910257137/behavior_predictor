@@ -5,14 +5,13 @@ import numpy as np
 import tensorflow as tf
 import os
 from glob import glob
-import scipy
 
 
-class SCRFDTDMMOptPostModel(tf.keras.Model):
+class SCRFDTFLiteOptModel(tf.keras.Model):
 
-    def __init__(self, tdmm_cfg, weight_root_dir, pred_model, n_objs, top_k_n,
+    def __init__(self, tdmm_cfg, weight_root_dir, interpreter, n_objs, top_k_n,
                  kp_thres, nms_iou_thres, resize_shape, *args, **kwargs):
-        super(SCRFDTDMMOptPostModel, self).__init__(*args, **kwargs)
+        super(SCRFDTFLiteOptModel, self).__init__(*args, **kwargs)
 
         def _get_bbox_weights(bbox_dir):
             bbox_weight_paths = list(glob(os.path.join(bbox_dir, "*.npy")))
@@ -47,7 +46,34 @@ class SCRFDTDMMOptPostModel(tf.keras.Model):
                     weights_pred.append(vals)
             return weighs_conv3x3, biass_conv3x3, weights_pred, biass_pred
 
-        self.pred_model = pred_model
+        self.interpreter = interpreter
+        self.interpreter.allocate_tensors()
+        self.input_details = self.interpreter.get_input_details()
+        self.output_details = self.interpreter.get_output_details()
+        self.map_keys = [
+            "stride_2_x",
+            "stride_1_cls",
+            "stride_0_x",
+            "stride_0_cls",
+            "stride_1_x",
+            "stride_2_bbox_x",
+            "stride_2_cls",
+            "stride_0_bbox_x",
+            "stride_1_bbox_x",
+        ]
+        self.multi_lvs_keys = [[
+            "stride_0_cls",
+            "stride_0_bbox_x",
+            "stride_0_x",
+        ], [
+            "stride_1_cls",
+            "stride_1_bbox_x",
+            "stride_1_x",
+        ], [
+            "stride_2_cls",
+            "stride_2_bbox_x",
+            "stride_2_x",
+        ]]
         self.n_objs = n_objs
         self.top_k_n = top_k_n
         self.kp_thres = kp_thres
@@ -67,6 +93,9 @@ class SCRFDTDMMOptPostModel(tf.keras.Model):
         pms_exp = pms[:, self.n_R + self.n_shp:-3]
         pms = tf.concat([pms_R, pms_shp, pms_exp], axis=-1)
         self.pms = pms[:2, :]
+        # self.pms.numpy().reshape([-1]).astype(np.float32).tofile(
+        #     "/aidata/anders/data_collection/okay/total/archives/whole/scale_down/BFM/pms.bin"
+        # )
         head_model = load_BFM(tdmm_cfg['model_path'])
         kpt_ind = head_model['kpt_ind']
         X_ind_all = np.stack([kpt_ind * 3, kpt_ind * 3 + 1, kpt_ind * 3 + 2])
@@ -79,6 +108,9 @@ class SCRFDTDMMOptPostModel(tf.keras.Model):
         self.valid_ind = tf.cast(valid_ind, tf.int32)
         self.u_base = tf.cast(head_model['shapeMU'], tf.float32)
         self.u_base = tf.gather(self.u_base, self.valid_ind)
+        # self.u_base.numpy().reshape([-1]).astype(np.float32).tofile(
+        #     "/aidata/anders/data_collection/okay/total/archives/whole/scale_down/BFM/u_base.bin"
+        # )
         self.u_base = tf.reshape(self.u_base,
                                  (tf.shape(self.u_base)[0] // 3, 3))
         self.u_base = tf.reshape(self.u_base,
@@ -86,9 +118,15 @@ class SCRFDTDMMOptPostModel(tf.keras.Model):
         self.shp_base = tf.cast(head_model['shapePC'],
                                 tf.float32)[:, :self.n_shp]
         self.shp_base = tf.gather(self.shp_base, self.valid_ind)
+        # self.shp_base.numpy().reshape([-1]).astype(np.float32).tofile(
+        #     "/aidata/anders/data_collection/okay/total/archives/whole/scale_down/BFM/shp_base.bin"
+        # )
         self.exp_base = tf.cast(head_model['expPC'],
                                 tf.float32)[:, :self.n_exp]
         self.exp_base = tf.gather(self.exp_base, self.valid_ind)
+        # self.exp_base.numpy().reshape([-1]).astype(np.float32).tofile(
+        #     "/aidata/anders/data_collection/okay/total/archives/whole/scale_down/BFM/exp_base.bin"
+        # )
         bbox_dir = os.path.join(weight_root_dir, "bbox")
         kps_dir = os.path.join(weight_root_dir, "kps")
         params_dir = os.path.join(weight_root_dir, "params")
@@ -103,15 +141,28 @@ class SCRFDTDMMOptPostModel(tf.keras.Model):
         X, Y = tf.meshgrid(tf.range(-2, 3), tf.range(-2, 3))
         self.grid_5x5 = tf.stack([Y, X], axis=-1)
 
-    @tf.function
+    # @tf.function
     def call(self, x, training=False):
         imgs, origin_shapes = x
         batch_size = tf.shape(imgs)[0]
         self.resize_ratio = tf.cast(origin_shapes / self.resize_shape,
                                     tf.dtypes.float32)
-        preds = self.pred_model(imgs, training=False)
+
+        self.interpreter.set_tensor(self.input_details[0]['index'], imgs)
+        self.interpreter.invoke()
+        pred_branches = {}
+        for key, output_detail in zip(self.map_keys, self.output_details):
+            index = output_detail["index"]
+            pred_branches[key] = self.interpreter.get_tensor(index)
+            #TODO: get map keys for outputs
+        multi_lv_feats = []
+        for lv_keys in self.multi_lvs_keys:
+            temp = []
+            for key in lv_keys:
+                temp.append(pred_branches[key])
+            multi_lv_feats.append(temp)
         box_results, b_lnmk_outputs = self._anchor_assign(
-            batch_size, preds["multi_lv_feats"])
+            batch_size, multi_lv_feats)
         return box_results, b_lnmk_outputs
 
     # @tf.function
@@ -123,7 +174,6 @@ class SCRFDTDMMOptPostModel(tf.keras.Model):
         obj_start_idx = 0
         b_idx_list, b_bbox_list, b_lnmk_list = [], [], []
         b_kpss_list = []
-
         for i, (lv_feats,
                 stride) in enumerate(zip(multi_lv_feats,
                                          self._feat_stride_fpn)):
@@ -140,7 +190,6 @@ class SCRFDTDMMOptPostModel(tf.keras.Model):
             b_cls_preds = tf.reshape(tf.gather_nd(b_cls_preds, idxs), [-1, 1])
             b_bbox_preds, b_param_preds, b_kp_preds = self._post_convolution(
                 i, feat_map_idxs, reg_feat, x)
-
             b_param_preds = tf.reshape(
                 b_param_preds,
                 [-1, tf.shape(b_param_preds)[-1] // self._num_anchors])
@@ -155,6 +204,7 @@ class SCRFDTDMMOptPostModel(tf.keras.Model):
             width = self.resize_shape[1] // stride
             X, Y = tf.meshgrid(tf.range(0, width), tf.range(0, height))
             anchor_centers = tf.stack([X, Y], axis=-1)
+            # anchor_centers = tf.reshape(anchor_centers, [-1])
             anchor_centers = tf.reshape((anchor_centers * stride), (-1, 2))
             anchor_centers = tf.reshape(anchor_centers, [feat_h, feat_w, 2])
             anchor_centers = tf.tile(anchor_centers[None, :, :, :],
@@ -165,7 +215,6 @@ class SCRFDTDMMOptPostModel(tf.keras.Model):
                     tf.stack([anchor_centers] * self._num_anchors, axis=1),
                     (-1, 2))
             b_bboxes = self.distance2bbox(anchor_centers, b_bbox_preds)
-
             b_kp_preds = self.distance2kps(anchor_centers, b_kp_preds)
             N = tf.shape(b_bboxes)[0]
             b_bboxes = tf.reshape(b_bboxes, (N // 2, 2, 4))
@@ -180,7 +229,9 @@ class SCRFDTDMMOptPostModel(tf.keras.Model):
             b_kp_preds = tf.reshape(b_kp_preds,
                                     (N // 2, 2, tf.shape(b_kp_preds)[-1]))
             b_kp_preds = tf.gather_nd(b_kp_preds, s_idxs)
+
             b_param_preds = b_param_preds * self.pms[1] + self.pms[0]
+
             # b_params_list.append(b_param_preds)
             vertices = self.u_base[None, ...] + tf.linalg.matmul(
                 self.shp_base, b_param_preds[:, self.n_R:self.n_R + self.n_shp,
@@ -191,12 +242,12 @@ class SCRFDTDMMOptPostModel(tf.keras.Model):
                                   (-1, tf.shape(vertices)[-2] // 3, 3))
             b_R = tf.reshape(b_param_preds[:, :self.n_R], [-1, 3, 3])
             b_lnmks = tf.linalg.matmul(vertices, b_R, transpose_b=(0, 2, 1))
-
             num_detected_objs = tf.math.reduce_sum(tf.cast(mask, tf.float32))
             obj_idxs = tf.range(num_detected_objs, dtype=tf.int32)[:, None]
             obj_idxs += obj_start_idx
             obj_start_idx += tf.cast(num_detected_objs, tf.int32)
             b_bboxes = tf.reshape(b_bboxes, (-1, 2, 2))
+
             b_bboxes = tf.einsum('n c d, b d -> n c d', b_bboxes[..., ::-1],
                                  self.resize_ratio)
             b_bboxes = tf.reshape(b_bboxes, (-1, 4))
@@ -211,6 +262,7 @@ class SCRFDTDMMOptPostModel(tf.keras.Model):
                                    self.resize_ratio)
             b_kpss_list.append(b_kp_preds)
             b_outputs = tf.tensor_scatter_nd_update(b_outputs, idxs, b_bboxes)
+        xxxx
         b_idx_list = tf.concat(b_idx_list, axis=0)
         b_bbox_list = tf.concat(b_bbox_list, axis=0)
         b_lnmk_list = tf.concat(b_lnmk_list, axis=0)
@@ -279,6 +331,7 @@ class SCRFDTDMMOptPostModel(tf.keras.Model):
         reg_feat = tf.reshape(reg_feat, [N, 3, 3, tf.shape(reg_feat)[-1]])
         reg_feat = reg_feat[..., None]
         bbox_weight = tf.tile(bbox_weight[None, ...], [N, 1, 1, 1, 1])
+
         b_bbox_preds = reg_feat * bbox_weight
 
         b_bbox_preds = tf.math.reduce_sum(b_bbox_preds,
@@ -291,31 +344,31 @@ class SCRFDTDMMOptPostModel(tf.keras.Model):
                                                       (stride_i + 1)]
         param_weights_pred, param_biass_pred = self.param_weights_pred[
             stride_i], self.param_biass_pred[stride_i]
-
         b_grid_params = loc_idxs[:, None,
                                  None, :] + self.grid_5x5[None, :, :, :]
         b_grid_params = tf.reshape(b_grid_params, (-1, 2))
         b_grid_params = tf.concat([tf.tile(b_idxs, [25, 1]), b_grid_params],
                                   axis=-1)
-        # print('-' * 100)
-        # print(b_grid_params)
         x = tf.gather_nd(x, b_grid_params)
         x = tf.reshape(x, [N, 5, 5, tf.shape(x)[-1]])
         x = x[..., None]
         param_weighs_conv3x3_0 = tf.tile(param_weighs_conv3x3[0][None, ...],
                                          [N, 1, 1, 1, 1])
+
         param_biass_conv3x3_0 = param_biass_conv3x3[0]
 
         param_weighs_conv3x3_1 = tf.tile(param_weighs_conv3x3[1][None, ...],
                                          [N, 1, 1, 1, 1])
         param_biass_conv3x3_1 = param_biass_conv3x3[1]
         tmp_x = []
+
         for i in range(3):
             for j in range(3):
                 tmp_x.append(
                     conv(x[:, i:i + 3, j:j + 3], param_weighs_conv3x3_0,
                          param_biass_conv3x3_0)[:, None, :])
         param_x = tf.concat(tmp_x, axis=-2)
+
         param_x = tf.where(param_x > 0., param_x, 0.)
         param_x = tf.reshape(param_x, (N, 3, 3, tf.shape(param_x)[-1], 1))
 
@@ -325,9 +378,11 @@ class SCRFDTDMMOptPostModel(tf.keras.Model):
         param_x = tf.where(param_x > 0., param_x, 0.)
 
         param_weights_pred = tf.squeeze(param_weights_pred, axis=0)
+
         param_x = param_x[:, :, None]
         b_param_preds = tf.math.reduce_sum(param_x * param_weights_pred,
                                            axis=-2) + param_biass_pred[None, :]
+
         # -------------------------------------------------- kps branch
         kp_weighs_conv3x3, kp_biass_conv3x3, = self.kp_weighs_conv3x3[
             2 * stride_i:2 *
@@ -360,6 +415,7 @@ class SCRFDTDMMOptPostModel(tf.keras.Model):
         kp_x = tf.where(kp_x > 0., kp_x, 0.)
 
         kp_weights_pred = tf.squeeze(kp_weights_pred, axis=0)
+
         kp_x = kp_x[:, :, None]
         b_kp_preds = tf.math.reduce_sum(kp_x * kp_weights_pred,
                                         axis=-2) + kp_biass_pred[None, :]
@@ -396,7 +452,7 @@ class SCRFDTDMMOptPostModel(tf.keras.Model):
                                   clip_value_max=max_shape[0])
         return tf.stack([x1, y1, x2, y2], axis=-1)
 
-    @tf.function
+    # @tf.function
     def distance2kps(self, points, distance):
         """Decode distance prediction to bounding box.
 
