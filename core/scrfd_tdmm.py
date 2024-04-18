@@ -19,10 +19,10 @@ class SCRFDTDMMPostModel(tf.keras.Model):
         self.nms_iou_thres = nms_iou_thres
         self.resize_shape = tf.cast(resize_shape, tf.float32)
         self.cls_out_channels = 2
-        self._feat_stride_fpn = [8, 16, 32]
+        # self._feat_stride_fpn = [8, 16, 32]
+        self._feat_stride_fpn = [16]
         self.num_levels = len(self._feat_stride_fpn)
         self.num_level_anchors = [3200, 800, 200]
-        self.map_sizes = [[40, 40], [20, 20], [10, 10]]
         self._num_anchors = 2
         self.n_R = tdmm_cfg['n_R']
         self.n_shp = tdmm_cfg['n_shp']
@@ -56,7 +56,7 @@ class SCRFDTDMMPostModel(tf.keras.Model):
                                 tf.float32)[:, :self.n_exp]
         self.exp_base = tf.gather(self.exp_base, self.valid_ind)
 
-    @tf.function
+    # @tf.function
     def call(self, x, training=False):
         imgs, origin_shapes = x
         batch_size = tf.shape(imgs)[0]
@@ -77,8 +77,9 @@ class SCRFDTDMMPostModel(tf.keras.Model):
         obj_start_idx = 0
         b_idx_list, b_bbox_list, b_lnmk_list = [], [], []
         b_params_list, b_kpss_list = [], []
-        for i, (lv_feats, stride, map_size) in enumerate(
-                zip(multi_lv_feats, self._feat_stride_fpn, self.map_sizes)):
+        for i, (lv_feats,
+                stride) in enumerate(zip(multi_lv_feats,
+                                         self._feat_stride_fpn)):
             # if i == 0:
             #     continue
             b_cls_preds, b_bbox_preds, b_param_preds, b_param_kps = lv_feats
@@ -97,6 +98,7 @@ class SCRFDTDMMPostModel(tf.keras.Model):
             idxs = tf.where(mask == True)
             channel_idxs = tf.cast(idxs, tf.int32)[:, -1:]
             b_cls_preds = tf.reshape(tf.gather_nd(b_cls_preds, idxs), [-1, 1])
+
             b_bbox_preds = b_bbox_preds * stride
             b_bbox_preds = tf.gather_nd(b_bbox_preds, idxs[:, :1])
             height = self.resize_shape[0] // stride
